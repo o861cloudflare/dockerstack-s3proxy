@@ -56,7 +56,7 @@ services:
 Thu muc goi y nen tao san:
 
 ```bash
-mkdir -p .docker-volumes/s3proxy/data
+mkdir -p .docker-volumes/s3proxy-data
 mkdir -p .docker-volumes/caddy/data .docker-volumes/caddy/config
 mkdir -p .docker-volumes/filebrowser/database
 mkdir -p .docker-volumes/tailscale/var-lib
@@ -74,7 +74,7 @@ PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force `
-  .docker-volumes/s3proxy/data, `
+  .docker-volumes/s3proxy-data, `
   .docker-volumes/caddy/data, `
   .docker-volumes/caddy/config, `
   .docker-volumes/filebrowser/database, `

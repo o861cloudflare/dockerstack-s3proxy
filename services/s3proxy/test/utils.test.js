@@ -6,7 +6,7 @@
  *   PROXY_API_KEY=test \
  *   FIREBASE_RTDB_URL=https://dummy.firebaseio.com \
  *   FIREBASE_DB_SECRET=dummy \
- *   SQLITE_PATH=./data/test-utils.db \
+ *   SQLITE_PATH=../../.docker-volumes/s3proxy-data/test-utils.db \
  *   node test/utils.test.js
  *
  * Expected output:
@@ -22,8 +22,9 @@ import { mkdirSync } from 'fs'
 process.env.PROXY_API_KEY = process.env.PROXY_API_KEY || 'test'
 process.env.FIREBASE_RTDB_URL = process.env.FIREBASE_RTDB_URL || 'https://dummy.firebaseio.com'
 process.env.FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || 'dummy'
-process.env.SQLITE_PATH = './data/test-utils-dummy.db'
-mkdirSync('./data', { recursive: true })
+const TEST_DB_DIR = '../../.docker-volumes/s3proxy-data'
+process.env.SQLITE_PATH = `${TEST_DB_DIR}/test-utils-dummy.db`
+mkdirSync(TEST_DB_DIR, { recursive: true })
 
 let passed = 0
 let failed = 0

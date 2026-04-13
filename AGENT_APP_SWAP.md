@@ -258,7 +258,7 @@ S3PROXY_DRAIN_TIMEOUT_MS=30000
 S3PROXY_LOG_LEVEL=info
 S3PROXY_WEBHOOK_ALERT_URL=
 S3PROXY_INSTANCE_ID=
-S3PROXY_SQLITE_PATH=./data/routes.db
+S3PROXY_SQLITE_PATH=./.docker-volumes/s3proxy-data/routes.db
 S3PROXY_LRU_MAX=10000
 S3PROXY_LRU_TTL_MS=300000
 
@@ -400,13 +400,13 @@ services:
       LOG_LEVEL: "${S3PROXY_LOG_LEVEL:-info}"
       WEBHOOK_ALERT_URL: "${S3PROXY_WEBHOOK_ALERT_URL:-}"
       INSTANCE_ID: "${S3PROXY_INSTANCE_ID:-}"
-      SQLITE_PATH: "${S3PROXY_SQLITE_PATH:-./data/routes.db}"
+      SQLITE_PATH: "${S3PROXY_SQLITE_PATH:-./.docker-volumes/s3proxy-data/routes.db}"
       LRU_MAX: "${S3PROXY_LRU_MAX:-10000}"
       LRU_TTL_MS: "${S3PROXY_LRU_TTL_MS:-300000}"
     ports:
       - "127.0.0.1:${APP_HOST_PORT:-3000}:${APP_PORT:-3000}"
     volumes:
-      - ${DOCKER_VOLUMES_ROOT:-./.docker-volumes}/s3proxy/data:/app/data
+      - ${DOCKER_VOLUMES_ROOT:-./.docker-volumes}/s3proxy-data:/app/.docker-volumes/s3proxy-data
     labels:
       # Public HTTP sites behind Cloudflare Tunnel.
       - "caddy=http://${PROJECT_NAME}.${DOMAIN}, http://main.${DOMAIN}, http://${DOMAIN}, http://${PROJECT_NAME}.${TAILSCALE_TAILNET_DOMAIN}"
@@ -849,7 +849,7 @@ prepare_docker_volume_dirs() {
   volume_root="$(resolve_host_path "${DOCKER_VOLUMES_ROOT:-./.docker-volumes}")"
 
   mkdir -p \
-    "$volume_root/s3proxy/data" \
+    "$volume_root/s3proxy-data" \
     "$volume_root/caddy/data" \
     "$volume_root/caddy/config" \
     "$volume_root/filebrowser/database" \

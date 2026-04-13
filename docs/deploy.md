@@ -69,7 +69,7 @@ Nếu `TAILSCALE_KEEP_IP_REMOVE_HOSTNAME_ENABLE=true`, bắt buộc thêm:
 - `APP_HOST_PORT`: mở truy cập localhost trực tiếp.
 - `NODE_ENV`: mặc định `production`.
 - `HEALTH_PATH`: mặc định `/health`.
-- `S3PROXY_SQLITE_PATH`: mặc định `./data/routes.db`.
+- `S3PROXY_SQLITE_PATH`: mặc định `./.docker-volumes/s3proxy-data/routes.db`.
 - `S3PROXY_QUOTA_*`, `S3PROXY_RECONCILE_INTERVAL_MS`, `S3PROXY_LOG_LEVEL`: tuning runtime s3proxy.
 - `DOCKER_SOCK`: đường dẫn docker socket nếu khác mặc định.
 - `TAILSCALE_TAGS`: mặc định `tag:container`.

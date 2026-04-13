@@ -9,11 +9,12 @@ import { mkdirSync, existsSync, unlinkSync } from 'fs'
 process.env.PROXY_API_KEY = process.env.PROXY_API_KEY || 'test'
 process.env.FIREBASE_RTDB_URL = process.env.FIREBASE_RTDB_URL || 'https://dummy.firebaseio.com'
 process.env.FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || 'dummy'
-process.env.SQLITE_PATH = './data/test-multi-account.db'
+const TEST_DB_DIR = '../../.docker-volumes/s3proxy-data'
+process.env.SQLITE_PATH = `${TEST_DB_DIR}/test-multi-account.db`
 process.env.LOG_LEVEL = 'fatal'
 
 const TEST_DB = process.env.SQLITE_PATH
-mkdirSync('./data', { recursive: true })
+mkdirSync(TEST_DB_DIR, { recursive: true })
 for (const file of [TEST_DB, `${TEST_DB}-shm`, `${TEST_DB}-wal`]) {
   if (existsSync(file)) unlinkSync(file)
 }

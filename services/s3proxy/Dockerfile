@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile --prod || pnpm install --prod
 
 COPY src/ ./src/
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/.docker-volumes/s3proxy-data
 
 ENV NODE_ENV=production
 ENV PORT=3000

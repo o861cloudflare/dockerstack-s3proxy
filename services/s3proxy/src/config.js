@@ -6,8 +6,10 @@
  * Validate environment variables and export a frozen config object.
  */
 
-import { hostname } from "os";
+import { existsSync } from "fs";
 import { randomBytes } from "crypto";
+import { hostname } from "os";
+import { dirname, join, resolve } from "path";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -45,6 +47,26 @@ function optionalInt(name, defaultValue) {
     return defaultValue;
   }
   return numeric;
+}
+
+function findWorkspaceRoot(startDir) {
+  let current = resolve(startDir);
+
+  while (true) {
+    if (existsSync(join(current, ".docker-volumes")) || existsSync(join(current, ".git"))) {
+      return current;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function defaultSqlitePath() {
+  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  if (!workspaceRoot) return join(process.cwd(), ".docker-volumes", "s3proxy-data", "routes.db");
+  return join(workspaceRoot, ".docker-volumes", "s3proxy-data", "routes.db");
 }
 
 const REQUIRED_VARS = ["PROXY_API_KEY", "FIREBASE_RTDB_URL", "FIREBASE_DB_SECRET"];
@@ -85,7 +107,7 @@ const config = Object.freeze({
   LOG_LEVEL: optionalEnv("LOG_LEVEL", "info"),
   WEBHOOK_ALERT_URL: optionalEnv("WEBHOOK_ALERT_URL", ""),
   INSTANCE_ID: instanceId,
-  SQLITE_PATH: optionalEnv("SQLITE_PATH", "./data/routes.db"),
+  SQLITE_PATH: optionalEnv("SQLITE_PATH", defaultSqlitePath()),
   LRU_MAX: optionalInt("LRU_MAX", 10_000),
   LRU_TTL_MS: optionalInt("LRU_TTL_MS", 300_000),
 });

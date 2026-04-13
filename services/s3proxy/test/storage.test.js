@@ -9,9 +9,10 @@ process.env.PROXY_API_KEY = process.env.PROXY_API_KEY || 'test'
 process.env.FIREBASE_RTDB_URL = process.env.FIREBASE_RTDB_URL || 'https://dummy.firebaseio.com'
 process.env.FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || 'dummy'
 
-const TEST_DB = './data/test-t3-storage.db'
+const TEST_DB_DIR = '../../.docker-volumes/s3proxy-data'
+const TEST_DB = `${TEST_DB_DIR}/test-t3-storage.db`
 process.env.SQLITE_PATH = TEST_DB
-mkdirSync('./data', { recursive: true })
+mkdirSync(TEST_DB_DIR, { recursive: true })
 if (existsSync(TEST_DB)) unlinkSync(TEST_DB)
 
 let passed = 0

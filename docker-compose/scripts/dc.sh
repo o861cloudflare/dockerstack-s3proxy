@@ -81,7 +81,7 @@ prepare_docker_volume_dirs() {
   volume_root="$(resolve_host_path "${DOCKER_VOLUMES_ROOT:-./.docker-volumes}")"
 
   mkdir -p \
-    "$volume_root/s3proxy/data" \
+    "$volume_root/s3proxy-data" \
     "$volume_root/caddy/data" \
     "$volume_root/caddy/config" \
     "$volume_root/filebrowser/database" \

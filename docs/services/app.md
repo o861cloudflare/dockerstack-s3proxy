@@ -8,7 +8,7 @@
 - Image local tag: `${PROJECT_NAME}-s3proxy:local`
 - Build context: `./services/s3proxy`
 - Port expose localhost: `127.0.0.1:${APP_HOST_PORT}:${APP_PORT}`
-- Data volume: `${DOCKER_VOLUMES_ROOT:-./.docker-volumes}/s3proxy/data:/app/data`
+- Data volume: `${DOCKER_VOLUMES_ROOT:-./.docker-volumes}/s3proxy-data:/app/.docker-volumes/s3proxy-data`
 - Healthcheck: `wget http://localhost:${APP_PORT}${HEALTH_PATH}`
 
 ## ENV bắt buộc
@@ -22,7 +22,7 @@
 - `NODE_ENV` (default production).
 - `HEALTH_PATH` (default `/health`).
 - `DOCKER_VOLUMES_ROOT` (default `./.docker-volumes`).
-- `S3PROXY_SQLITE_PATH` (default `./data/routes.db`).
+- `S3PROXY_SQLITE_PATH` (default `./.docker-volumes/s3proxy-data/routes.db`).
 - `TAILSCALE_TAILNET_DOMAIN`: route HTTPS nội bộ qua caddy_1.
 
 ## Routing
