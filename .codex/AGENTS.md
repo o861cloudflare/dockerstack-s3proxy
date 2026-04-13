@@ -10,13 +10,27 @@ These rules are mandatory for Codex in this project.
 
 ## 2) Message format
 
-Use commit-ready content:
+Use conversational summary content (not commit-style), aligned with what Codex says to the user.
 
-1. First line: `<type>: <short summary>`
-2. Blank line
-3. Flat bullet list of key changes
+Required structure in `.opushforce.message`:
 
-Suggested `type` values: `feat`, `fix`, `refactor`, `docs`, `chore`.
+1. Opening line confirming rule-following, for example:
+   `Đã làm đúng theo rule trong AGENTS.md: mình đã cập nhật .opushforce.message trước khi trả lời.`
+2. Section: `Input của user`
+3. Section: `Nguyên nhân gốc`
+4. Section: `Cách đã chỉnh để khắc phục`
+5. Section: `File đã áp fix bug`
+6. Section: `Trả lời câu hỏi "<câu hỏi chính của user>"`
+7. If runtime action is needed, include exact command(s) at the end.
+
+Formatting rules:
+
+- Write in Vietnamese, concise and clear.
+- Prefer short lines or flat bullets; no nested bullets.
+- In `Input của user`, include the user's original request text; if too long, keep a concise excerpt that preserves key constraints.
+- If user input contains secrets/tokens, mask sensitive values.
+- File list can be plain filenames or paths.
+- Do not use `<type>: <summary>` commit prefix.
 
 ## 3) Completion gate
 
