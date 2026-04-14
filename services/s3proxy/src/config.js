@@ -49,6 +49,16 @@ function optionalInt(name, defaultValue) {
   return numeric;
 }
 
+function optionalBool(name, defaultValue) {
+  const val = process.env[name];
+  if (!val || val.trim() === "") return defaultValue;
+  const normalized = val.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  process.stderr.write(`[config] WARNING: ${name}="${val}" is not a valid boolean, using default ${defaultValue}\n`);
+  return defaultValue;
+}
+
 function findWorkspaceRoot(startDir) {
   let current = resolve(startDir);
 
@@ -110,6 +120,7 @@ const config = Object.freeze({
   SQLITE_PATH: optionalEnv("SQLITE_PATH", defaultSqlitePath()),
   LRU_MAX: optionalInt("LRU_MAX", 10_000),
   LRU_TTL_MS: optionalInt("LRU_TTL_MS", 300_000),
+  ALLOW_INSECURE_SIGV4_KEY_EXTRACT: optionalBool("ALLOW_INSECURE_SIGV4_KEY_EXTRACT", false),
 });
 
 export default config;

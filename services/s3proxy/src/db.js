@@ -35,6 +35,12 @@ export const ROUTE_RECONCILE_STATUS = Object.freeze({
   NEEDS_REVIEW: 'NEEDS_REVIEW',
 })
 
+export const BUCKET_VERSIONING_STATUS = Object.freeze({
+  NONE: '',
+  ENABLED: 'Enabled',
+  SUSPENDED: 'Suspended',
+})
+
 export const db = new Database(config.SQLITE_PATH)
 
 db.pragma('journal_mode = WAL')
@@ -116,6 +122,14 @@ db.exec(`
     backend_key TEXT    NOT NULL DEFAULT '',
     started_at  INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS buckets (
+    bucket            TEXT    PRIMARY KEY,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    deleted_at        INTEGER,
+    versioning_status TEXT    NOT NULL DEFAULT ''
+  );
 `)
 
 ensureColumn('routes', 'backend_key', "backend_key TEXT NOT NULL DEFAULT ''")
@@ -134,6 +148,9 @@ ensureColumn('routes', 'last_reconciled_at', 'last_reconciled_at INTEGER')
 ensureColumn('multipart_uploads', 'backend_key', "backend_key TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'addressing_style', "addressing_style TEXT NOT NULL DEFAULT 'path'")
 ensureColumn('accounts', 'payload_signing_mode', "payload_signing_mode TEXT NOT NULL DEFAULT 'unsigned'")
+ensureColumn('buckets', 'updated_at', 'updated_at INTEGER NOT NULL DEFAULT 0')
+ensureColumn('buckets', 'deleted_at', 'deleted_at INTEGER')
+ensureColumn('buckets', 'versioning_status', "versioning_status TEXT NOT NULL DEFAULT ''")
 
 db.exec(`
   UPDATE routes
@@ -168,6 +185,15 @@ db.exec(`
   SET backend_key = object_key
   WHERE COALESCE(backend_key, '') = '';
 
+  INSERT OR IGNORE INTO buckets (bucket, created_at, updated_at, deleted_at, versioning_status)
+  SELECT bucket, MIN(uploaded_at), MAX(updated_at), NULL, ''
+  FROM routes
+  GROUP BY bucket;
+
+  UPDATE buckets
+  SET updated_at = COALESCE(NULLIF(updated_at, 0), created_at)
+  WHERE updated_at IS NULL OR updated_at = 0;
+
   CREATE INDEX IF NOT EXISTS idx_routes_account ON routes(account_id);
   CREATE INDEX IF NOT EXISTS idx_routes_account_backend ON routes(account_id, backend_key);
   CREATE INDEX IF NOT EXISTS idx_routes_bucket_object ON routes(bucket, object_key, state, deleted_at);
@@ -175,6 +201,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_routes_sync_state ON routes(sync_state, updated_at);
   CREATE INDEX IF NOT EXISTS idx_routes_state ON routes(state, account_id);
   CREATE INDEX IF NOT EXISTS idx_accounts_active ON accounts(active, used_bytes);
+  CREATE INDEX IF NOT EXISTS idx_buckets_deleted ON buckets(deleted_at, bucket);
 `)
 
 function isUsageCounted(route) {
@@ -229,6 +256,26 @@ function normalizeRouteForWrite(route, existing) {
 }
 
 const stmts = {
+  upsertBucket: db.prepare(`
+    INSERT INTO buckets (bucket, created_at, updated_at, deleted_at, versioning_status)
+    VALUES (@bucket, @created_at, @updated_at, @deleted_at, @versioning_status)
+    ON CONFLICT(bucket) DO UPDATE SET
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at,
+      versioning_status = excluded.versioning_status
+  `),
+  getBucket: db.prepare(`
+    SELECT *
+    FROM buckets
+    WHERE bucket = ?
+    LIMIT 1
+  `),
+  listActiveBuckets: db.prepare(`
+    SELECT *
+    FROM buckets
+    WHERE deleted_at IS NULL
+    ORDER BY bucket ASC
+  `),
   upsertAccount: db.prepare(`
     INSERT OR REPLACE INTO accounts
       (account_id, access_key_id, secret_key, endpoint, region, bucket, addressing_style, payload_signing_mode,
@@ -411,6 +458,86 @@ export function setUsedBytesAbsolute(accountId, bytes) {
   stmts.setUsedBytesAbsolute.run({ account_id: accountId, bytes })
 }
 
+export function getBucket(bucket) {
+  return stmts.getBucket.get(bucket)
+}
+
+export function listActiveBuckets() {
+  return stmts.listActiveBuckets.all()
+}
+
+export const ensureBucketActive = db.transaction((bucket, now = Date.now()) => {
+  const existing = stmts.getBucket.get(bucket)
+
+  if (!existing) {
+    stmts.upsertBucket.run({
+      bucket,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      versioning_status: BUCKET_VERSIONING_STATUS.NONE,
+    })
+    return { bucket: stmts.getBucket.get(bucket), existed: false }
+  }
+
+  if (existing.deleted_at !== null) {
+    stmts.upsertBucket.run({
+      bucket,
+      created_at: existing.created_at ?? now,
+      updated_at: now,
+      deleted_at: null,
+      versioning_status: existing.versioning_status ?? BUCKET_VERSIONING_STATUS.NONE,
+    })
+    return { bucket: stmts.getBucket.get(bucket), existed: false }
+  }
+
+  stmts.upsertBucket.run({
+    bucket,
+    created_at: existing.created_at ?? now,
+    updated_at: now,
+    deleted_at: null,
+    versioning_status: existing.versioning_status ?? BUCKET_VERSIONING_STATUS.NONE,
+  })
+  return { bucket: stmts.getBucket.get(bucket), existed: true }
+})
+
+export const setBucketVersioningStatus = db.transaction((bucket, status, now = Date.now()) => {
+  const normalizedStatus = [BUCKET_VERSIONING_STATUS.ENABLED, BUCKET_VERSIONING_STATUS.SUSPENDED]
+    .includes(status)
+    ? status
+    : BUCKET_VERSIONING_STATUS.NONE
+
+  const existing = stmts.getBucket.get(bucket)
+  if (!existing || existing.deleted_at !== null) {
+    return null
+  }
+
+  stmts.upsertBucket.run({
+    bucket,
+    created_at: existing.created_at ?? now,
+    updated_at: now,
+    deleted_at: null,
+    versioning_status: normalizedStatus,
+  })
+
+  return stmts.getBucket.get(bucket)
+})
+
+export const markBucketDeleted = db.transaction((bucket, now = Date.now()) => {
+  const existing = stmts.getBucket.get(bucket)
+  if (!existing || existing.deleted_at !== null) return null
+
+  stmts.upsertBucket.run({
+    bucket,
+    created_at: existing.created_at ?? now,
+    updated_at: now,
+    deleted_at: now,
+    versioning_status: existing.versioning_status ?? BUCKET_VERSIONING_STATUS.NONE,
+  })
+
+  return stmts.getBucket.get(bucket)
+})
+
 export function upsertRoute(route) {
   const existing = stmts.getRoute.get(route.encoded_key)
   const normalized = normalizeRouteForWrite(route, existing)
@@ -474,6 +601,9 @@ function withVersion(existing, nextUpdatedAt = Date.now()) {
 export const commitUploadedObjectMetadata = db.transaction((route) => {
   const existing = stmts.getRoute.get(route.encoded_key)
   const now = Date.now()
+
+  ensureBucketActive(route.bucket, now)
+
   const { metadataVersion, updatedAt } = withVersion(existing, now)
   const normalized = normalizeRouteForWrite({
     ...route,

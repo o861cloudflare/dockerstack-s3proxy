@@ -66,9 +66,22 @@ function joinEndpointPath(basePath = '/', requestPath = '/') {
   return `${normalizedBase}${normalizedRequest}`
 }
 
+function encodeRfc3986(value = '') {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+}
+
+function encodeS3Path(path = '/') {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  const encoded = normalized
+    .split('/')
+    .map((segment, index) => (index === 0 ? '' : encodeRfc3986(segment)))
+    .join('/')
+  return encoded || '/'
+}
+
 function buildUpstreamTarget(account, path) {
   const endpointUrl = new URL(account.endpoint)
-  const signedPath = joinEndpointPath(endpointUrl.pathname, path)
+  const signedPath = encodeS3Path(joinEndpointPath(endpointUrl.pathname, path))
   const addressingStyle = String(account.addressing_style ?? 'path').toLowerCase()
 
   if (addressingStyle !== 'virtual') {
@@ -108,6 +121,27 @@ function buildUpstreamTarget(account, path) {
     hostname: `${bucket}.${endpointUrl.hostname}`,
     path: virtualPath.startsWith('/') ? virtualPath : `/${virtualPath}`,
   }
+}
+
+async function streamToBuffer(bodyStream, maxBytes = 512 * 1024 * 1024) {
+  if (!bodyStream) return null
+  if (Buffer.isBuffer(bodyStream)) return bodyStream
+  if (bodyStream instanceof Uint8Array) return Buffer.from(bodyStream)
+  if (typeof bodyStream === 'string') return Buffer.from(bodyStream)
+
+  const chunks = []
+  let total = 0
+  for await (const chunk of bodyStream) {
+    const asBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += asBuffer.length
+    if (total > maxBytes) {
+      const err = new Error(`Signed payload exceeds ${maxBytes} bytes buffer limit`)
+      err.code = 'SIGNED_PAYLOAD_TOO_LARGE'
+      throw err
+    }
+    chunks.push(asBuffer)
+  }
+  return Buffer.concat(chunks)
 }
 
 /**
@@ -194,14 +228,27 @@ export async function resignRequest({ account, method, path, query = {}, headers
  * @returns {Promise<import('undici').Dispatcher.ResponseData>}
  */
 export async function proxyRequest({ account, method, path, query = {}, headers = {}, bodyStream = null }) {
+  const normalizedMethod = method.toUpperCase()
+  const isUploadMethod = normalizedMethod === 'PUT' || normalizedMethod === 'POST'
+
   // For signing, we don't buffer the body — use UNSIGNED-PAYLOAD for streaming
   const headersForSign = { ...headers }
 
-  // Use unsigned payload for streaming PUTs to avoid buffering
   const payloadSigningMode = String(account.payload_signing_mode ?? 'unsigned').toLowerCase()
+  let requestBody = bodyStream
+  let bodyForSigning = null
+
+  // Signed payload mode requires hashing the exact body bytes.
+  if (payloadSigningMode === 'signed' && bodyStream && isUploadMethod) {
+    const bufferedBody = await streamToBuffer(bodyStream)
+    requestBody = bufferedBody
+    bodyForSigning = bufferedBody
+  }
+
+  // Use UNSIGNED-PAYLOAD for streaming uploads when signed mode is not required.
   const useUnsignedPayload = payloadSigningMode !== 'signed'
-    && bodyStream
-    && (method === 'PUT' || method === 'POST')
+    && Boolean(bodyStream)
+    && isUploadMethod
 
   if (useUnsignedPayload) {
     headersForSign['x-amz-content-sha256'] = 'UNSIGNED-PAYLOAD'
@@ -213,7 +260,7 @@ export async function proxyRequest({ account, method, path, query = {}, headers 
     path,
     query,
     headers: headersForSign,
-    body: null,
+    body: bodyForSigning,
   })
 
   // Override with unsigned payload header if streaming
@@ -222,12 +269,12 @@ export async function proxyRequest({ account, method, path, query = {}, headers 
   }
 
   const requestOptions = {
-    method: method.toUpperCase(),
+    method: normalizedMethod,
     headers: signedHeaders,
   }
 
-  if (bodyStream) {
-    requestOptions.body = bodyStream
+  if (requestBody) {
+    requestOptions.body = requestBody
   }
 
   return undiciRequest(url, requestOptions)

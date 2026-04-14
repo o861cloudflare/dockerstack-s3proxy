@@ -1,5 +1,9 @@
 project-api.http
 *credentials.json
+reports
+services/s3proxy/scripts/s3proxy_qa_runner.mjs
+s3proxy-http
+artifacts
 # ── Secrets (NEVER commit) ───────────────────────────────────────
 .env
 .env.local

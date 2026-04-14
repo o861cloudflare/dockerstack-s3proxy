@@ -206,6 +206,12 @@ async function testCreateDeleteEmptyBucket(fastify) {
 
 async function testRouteUploadsAcrossAccounts(fastify, upstreamA, upstreamB) {
   try {
+    const createBucket = await fastify.inject({
+      method: 'PUT',
+      url: '/rotating-bucket',
+      headers: { 'x-api-key': 'test' },
+    })
+
     const firstPut = await fastify.inject({
       method: 'PUT',
       url: '/rotating-bucket/alpha.txt',
@@ -228,6 +234,7 @@ async function testRouteUploadsAcrossAccounts(fastify, upstreamA, upstreamB) {
     const alphaRoute = getRoute(encodedKey('rotating-bucket', 'alpha.txt'))
     const betaRoute = getRoute(encodedKey('rotating-bucket', 'beta.txt'))
 
+    assert(createBucket.statusCode === 200, `create rotating-bucket status=${createBucket.statusCode}`)
     assert(firstPut.statusCode === 200, `first PUT status=${firstPut.statusCode}`)
     assert(secondPut.statusCode === 200, `second PUT status=${secondPut.statusCode}`)
     assert(alphaRoute?.account_id === 'acc1', `alpha account=${alphaRoute?.account_id}`)
@@ -333,6 +340,12 @@ async function testDeleteObjectsAndLogicalBucket(fastify, upstreamA, upstreamB) 
 
 async function testThresholdSwitchAndOverwrite(fastify, upstreamA, upstreamB) {
   try {
+    const createBucket = await fastify.inject({
+      method: 'PUT',
+      url: '/threshold-bucket',
+      headers: { 'x-api-key': 'test' },
+    })
+
     setUsedBytesAbsolute('acc1', 10)
     setUsedBytesAbsolute('acc2', 11)
     reloadAccountsFromSQLite()
@@ -353,6 +366,7 @@ async function testThresholdSwitchAndOverwrite(fastify, upstreamA, upstreamB) {
       headers: { 'x-api-key': 'test' },
     })
 
+    assert(createBucket.statusCode === 200, `create threshold-bucket status=${createBucket.statusCode}`)
     assert(thresholdPut.statusCode === 200, `threshold PUT status=${thresholdPut.statusCode}`)
     assert(firstRoute?.account_id === 'acc2', `threshold route account=${firstRoute?.account_id}`)
     assert(!upstreamA.hasObject('acc1-physical', 'threshold-bucket/gamma.txt'), 'gamma should not be on acc1 upstream')

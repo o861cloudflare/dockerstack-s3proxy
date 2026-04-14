@@ -3,22 +3,28 @@
  * S3-compatible route handlers backed by logical metadata control-plane state.
  */
 
-import { randomBytes } from 'crypto'
+import { createHash, randomBytes } from 'crypto'
 import { Readable } from 'stream'
 
 import { cacheDelete, cacheGet, cacheSet } from '../cache.js'
 import {
+  BUCKET_VERSIONING_STATUS,
   commitUploadedObjectMetadata,
+  ensureBucketActive,
   finalizeRouteDelete,
   getAccountById,
+  getBucket,
   getMultipartUpload,
   getRoute,
+  listActiveBuckets,
   listVisibleObjectsPage,
+  markBucketDeleted,
   markRouteDeleting,
   markRouteMissingBackend,
   revertDeletingRoute,
   ROUTE_RECONCILE_STATUS,
   ROUTE_STATE,
+  setBucketVersioningStatus,
   upsertMultipartUpload,
   deleteMultipartUpload,
 } from '../db.js'
@@ -48,6 +54,7 @@ import {
   buildGetBucketLocationResult,
   buildGetBucketVersioningResult,
   buildInitiateMultipartUploadResult,
+  buildListAllMyBucketsResult,
   buildListBucketResult,
 } from '../utils/s3Xml.js'
 import { syncRouteToRtdb } from '../controlPlane.js'
@@ -58,10 +65,15 @@ const XML_CONTENT_TYPE = 'application/xml'
 const MAX_LIST_SCAN_MULTIPLIER = 4
 const MIN_LIST_PAGE_SIZE = 100
 const UPLOAD_ID_PATTERN = /<UploadId>([^<]+)<\/UploadId>/i
+const UNSUPPORTED_BUCKET_QUERY_KEYS = [
+  'policy', 'cors', 'tagging', 'acl', 'website', 'lifecycle',
+  'notification', 'replication', 'ownershipControls', 'ownershipcontrols',
+  'publicAccessBlock', 'publicaccessblock', 'encryption', 'uploads', 'versions',
+]
 const FORWARD_RESPONSE_HEADERS = [
   'content-type', 'content-length', 'etag', 'last-modified',
   'cache-control', 'content-disposition', 'x-amz-request-id',
-  'x-amz-id-2', 'x-amz-version-id',
+  'x-amz-id-2', 'x-amz-version-id', 'x-amz-server-side-encryption',
 ]
 
 function nanoid(size = 10) {
@@ -86,6 +98,87 @@ function parseMaxKeys(rawValue) {
   const parsed = Number.parseInt(rawValue || '1000', 10)
   if (!Number.isFinite(parsed)) return 1000
   return Math.max(1, Math.min(parsed, 1000))
+}
+
+function hasAnyQueryFlag(query, keys = []) {
+  return keys.some((key) => hasQueryFlag(query, key))
+}
+
+function parseVersioningStatusFromXml(xmlText = '') {
+  const match = String(xmlText).match(/<Status>\s*(Enabled|Suspended)\s*<\/Status>/i)
+  if (!match) return null
+  const normalized = match[1].trim().toLowerCase()
+  if (normalized === 'enabled') return BUCKET_VERSIONING_STATUS.ENABLED
+  if (normalized === 'suspended') return BUCKET_VERSIONING_STATUS.SUSPENDED
+  return null
+}
+
+function normalizeEtag(etag = '') {
+  return String(etag).replace(/^"+|"+$/g, '')
+}
+
+function parseHttpDate(value) {
+  if (!value) return null
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseEtagList(value) {
+  if (!value) return []
+  return String(value)
+    .split(',')
+    .map((entry) => normalizeEtag(entry.trim()))
+    .filter(Boolean)
+}
+
+function evaluateConditionalRequest(request, routeMetadata) {
+  const currentEtag = normalizeEtag(routeMetadata?.etag ?? '')
+  const currentLastModified = Number(routeMetadata?.lastModified ?? routeMetadata?.last_modified ?? 0) || 0
+
+  const ifMatch = request.headers['if-match']
+  if (ifMatch) {
+    const values = parseEtagList(ifMatch)
+    const wildcard = values.includes('*')
+    if (!wildcard && (!currentEtag || !values.includes(currentEtag))) {
+      return { statusCode: 412, code: 'PreconditionFailed', message: 'At least one of the pre-conditions you specified did not hold.' }
+    }
+  }
+
+  const ifUnmodifiedSince = parseHttpDate(request.headers['if-unmodified-since'])
+  if (ifUnmodifiedSince !== null && currentLastModified > ifUnmodifiedSince) {
+    return { statusCode: 412, code: 'PreconditionFailed', message: 'At least one of the pre-conditions you specified did not hold.' }
+  }
+
+  const ifNoneMatch = request.headers['if-none-match']
+  if (ifNoneMatch) {
+    const values = parseEtagList(ifNoneMatch)
+    const wildcard = values.includes('*')
+    if (wildcard || (currentEtag && values.includes(currentEtag))) {
+      return {
+        statusCode: 304,
+        code: '',
+        message: '',
+      }
+    }
+  }
+
+  const ifModifiedSince = parseHttpDate(request.headers['if-modified-since'])
+  if (ifModifiedSince !== null && currentLastModified && currentLastModified <= ifModifiedSince) {
+    return {
+      statusCode: 304,
+      code: '',
+      message: '',
+    }
+  }
+
+  return null
+}
+
+function ensureBucketExists(bucket) {
+  const record = getBucket(bucket)
+  if (!record) return null
+  if (record.deleted_at !== null && record.deleted_at !== undefined) return null
+  return record
 }
 
 function getPayloadStream(request) {
@@ -130,6 +223,16 @@ async function readRequestBodyBuffer(request, maxBytes = 10 * 1024 * 1024) {
   }
 
   return Buffer.concat(chunks)
+}
+
+function verifyContentMd5Header(request, bodyBuffer) {
+  const provided = request.headers['content-md5']
+  if (!provided) return { ok: true, expected: '', actual: '' }
+
+  const expected = String(provided).trim()
+  const digest = createHash('md5').update(bodyBuffer).digest('base64')
+
+  return { ok: digest === expected, expected, actual: digest }
 }
 
 function toReplyBody(body) {
@@ -446,6 +549,12 @@ function setForwardResponseHeaders(reply, upstreamResponse) {
     const value = upstreamResponse.headers[header]
     if (value) reply.header(header, value)
   }
+
+  for (const [header, value] of Object.entries(upstreamResponse.headers ?? {})) {
+    if (!header.startsWith('x-amz-meta-')) continue
+    if (!value) continue
+    reply.header(header, value)
+  }
 }
 
 export default async function s3Routes(fastify, _opts) {
@@ -462,6 +571,35 @@ export default async function s3Routes(fastify, _opts) {
     // Parser may already exist in nested test apps.
   }
 
+  fastify.get('/', authHook, async (_request, reply) => {
+    addCorsHeaders(reply)
+
+    const buckets = listActiveBuckets().map((bucket) => ({
+      name: bucket.bucket,
+      createdAt: bucket.created_at,
+    }))
+
+    metrics.requestsTotal.inc({ method: 'GET', operation: 'list_buckets', status_code: 200 })
+    return reply
+      .code(200)
+      .header('Content-Type', XML_CONTENT_TYPE)
+      .send(buildListAllMyBucketsResult(buckets))
+  })
+
+  fastify.head('/:bucket', authHook, async (request, reply) => {
+    const { bucket } = request.params
+    addCorsHeaders(reply)
+
+    const record = ensureBucketExists(bucket)
+    if (!record) {
+      metrics.requestsTotal.inc({ method: 'HEAD', operation: 'head_bucket', status_code: 404 })
+      return reply.code(404).send()
+    }
+
+    metrics.requestsTotal.inc({ method: 'HEAD', operation: 'head_bucket', status_code: 200 })
+    return reply.code(200).send()
+  })
+
   fastify.put('/:bucket/*', {
     ...authHook,
     config: { rawBody: true },
@@ -473,6 +611,11 @@ export default async function s3Routes(fastify, _opts) {
     const query = request.query ?? {}
 
     addCorsHeaders(reply)
+
+    if (!ensureBucketExists(bucket)) {
+      metrics.requestsTotal.inc({ method: 'PUT', operation: 'put_object', status_code: 404 })
+      return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', reqId))
+    }
 
     if (request.headers['x-amz-copy-source']) {
       metrics.requestsTotal.inc({ method: 'PUT', operation: 'copy_object', status_code: 501 })
@@ -492,13 +635,24 @@ export default async function s3Routes(fastify, _opts) {
         return xmlReply(reply, 500, buildErrorXml('InternalError', 'Account not found', reqId))
       }
 
+      let partBodyStream = getPayloadStream(request)
+      if (request.headers['content-md5']) {
+        const partBodyBuffer = await readRequestBodyBuffer(request, 100 * 1024 * 1024)
+        const md5Check = verifyContentMd5Header(request, partBodyBuffer)
+        if (!md5Check.ok) {
+          metrics.requestsTotal.inc({ method: 'PUT', operation: 'upload_part', status_code: 400 })
+          return xmlReply(reply, 400, buildErrorXml('BadDigest', 'The Content-MD5 you specified did not match what we received.', reqId))
+        }
+        partBodyStream = Readable.from(partBodyBuffer)
+      }
+
       const upstream = await proxyRequest({
         account,
         method: 'PUT',
         path: `/${account.bucket}/${multipart.backend_key}`,
         query: { uploadId, partNumber },
         headers: buildForwardHeaders(request),
-        bodyStream: getPayloadStream(request),
+        bodyStream: partBodyStream,
       })
 
       setForwardResponseHeaders(reply, upstream)
@@ -507,7 +661,18 @@ export default async function s3Routes(fastify, _opts) {
       return reply.send(await consumeTextBody(upstream))
     }
 
-    const sizeBytes = Number.parseInt(request.headers['content-length'] ?? '0', 10) || 0
+    let bodyStream = getPayloadStream(request)
+    let sizeBytes = Number.parseInt(request.headers['content-length'] ?? '0', 10) || 0
+    if (request.headers['content-md5']) {
+      const bodyBuffer = await readRequestBodyBuffer(request, 100 * 1024 * 1024)
+      const md5Check = verifyContentMd5Header(request, bodyBuffer)
+      if (!md5Check.ok) {
+        metrics.requestsTotal.inc({ method: 'PUT', operation: 'put_object', status_code: 400 })
+        return xmlReply(reply, 400, buildErrorXml('BadDigest', 'The Content-MD5 you specified did not match what we received.', reqId))
+      }
+      bodyStream = Readable.from(bodyBuffer)
+      sizeBytes = bodyBuffer.length
+    }
 
     let target
     try {
@@ -528,7 +693,7 @@ export default async function s3Routes(fastify, _opts) {
       method: 'PUT',
       path: `/${target.account.bucket}/${target.backendKey}`,
       headers: buildForwardHeaders(request),
-      bodyStream: getPayloadStream(request),
+      bodyStream,
     })
 
     setForwardResponseHeaders(reply, upstream)
@@ -600,6 +765,11 @@ export default async function s3Routes(fastify, _opts) {
 
     addCorsHeaders(reply)
 
+    if (!ensureBucketExists(bucket)) {
+      metrics.requestsTotal.inc({ method: 'GET', operation: 'get_object', status_code: 404 })
+      return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', reqId))
+    }
+
     const route = await lookupRouteMetadata(encodedKey)
     if (!route || route.state !== ROUTE_STATE.ACTIVE) {
       return xmlReply(reply, 404, buildErrorXml('NoSuchKey', 'The specified key does not exist.', reqId))
@@ -608,6 +778,20 @@ export default async function s3Routes(fastify, _opts) {
     const account = getAccountById(route.accountId)
     if (!account) {
       return xmlReply(reply, 404, buildErrorXml('NoSuchKey', 'Account not found', reqId))
+    }
+
+    const conditionalResult = evaluateConditionalRequest(request, route)
+    if (conditionalResult?.statusCode === 304) {
+      metrics.requestsTotal.inc({ method: 'GET', operation: 'get_object', status_code: 304 })
+      return reply.code(304).send('')
+    }
+    if (conditionalResult?.statusCode === 412) {
+      metrics.requestsTotal.inc({ method: 'GET', operation: 'get_object', status_code: 412 })
+      return xmlReply(reply, 412, buildErrorXml(
+        conditionalResult.code || 'PreconditionFailed',
+        conditionalResult.message || 'At least one of the pre-conditions you specified did not hold.',
+        reqId,
+      ))
     }
 
     const upstream = await proxyRequest({
@@ -653,6 +837,11 @@ export default async function s3Routes(fastify, _opts) {
 
     addCorsHeaders(reply)
 
+    if (!ensureBucketExists(bucket)) {
+      metrics.requestsTotal.inc({ method: 'HEAD', operation: 'head_object', status_code: 404 })
+      return reply.code(404).send()
+    }
+
     const route = await lookupRouteMetadata(encodedKey)
     if (!route || route.state !== ROUTE_STATE.ACTIVE) {
       return reply.code(404).send()
@@ -661,6 +850,16 @@ export default async function s3Routes(fastify, _opts) {
     const account = getAccountById(route.accountId)
     if (!account) {
       return reply.code(404).send()
+    }
+
+    const conditionalResult = evaluateConditionalRequest(request, route)
+    if (conditionalResult?.statusCode === 304) {
+      metrics.requestsTotal.inc({ method: 'HEAD', operation: 'head_object', status_code: 304 })
+      return reply.code(304).send()
+    }
+    if (conditionalResult?.statusCode === 412) {
+      metrics.requestsTotal.inc({ method: 'HEAD', operation: 'head_object', status_code: 412 })
+      return reply.code(412).send()
     }
 
     const upstream = await proxyRequest({
@@ -698,6 +897,11 @@ export default async function s3Routes(fastify, _opts) {
     const query = request.query ?? {}
 
     addCorsHeaders(reply)
+
+    if (!ensureBucketExists(bucket)) {
+      metrics.requestsTotal.inc({ method: 'DELETE', operation: 'delete_object', status_code: 404 })
+      return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', reqId))
+    }
 
     if (normalizeQueryValue(query.uploadId)) {
       const uploadId = normalizeQueryValue(query.uploadId)
@@ -792,6 +996,17 @@ export default async function s3Routes(fastify, _opts) {
 
     addCorsHeaders(reply)
 
+    const bucketRecord = ensureBucketExists(bucket)
+    if (!bucketRecord) {
+      metrics.requestsTotal.inc({ method: 'GET', operation: 'list_objects', status_code: 404 })
+      return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', request.id))
+    }
+
+    if (hasAnyQueryFlag(query, UNSUPPORTED_BUCKET_QUERY_KEYS)) {
+      metrics.requestsTotal.inc({ method: 'GET', operation: 'bucket_subresource', status_code: 501 })
+      return xmlReply(reply, 501, buildErrorXml('NotImplemented', 'Requested bucket sub-resource is not implemented by this proxy.', request.id))
+    }
+
     if (hasQueryFlag(query, 'location')) {
       metrics.requestsTotal.inc({ method: 'GET', operation: 'get_bucket_location', status_code: 200 })
       return reply.code(200).header('Content-Type', XML_CONTENT_TYPE).send(buildGetBucketLocationResult(''))
@@ -799,7 +1014,9 @@ export default async function s3Routes(fastify, _opts) {
 
     if (hasQueryFlag(query, 'versioning')) {
       metrics.requestsTotal.inc({ method: 'GET', operation: 'get_bucket_versioning', status_code: 200 })
-      return reply.code(200).header('Content-Type', XML_CONTENT_TYPE).send(buildGetBucketVersioningResult(''))
+      return reply.code(200).header('Content-Type', XML_CONTENT_TYPE).send(
+        buildGetBucketVersioningResult(bucketRecord.versioning_status ?? BUCKET_VERSIONING_STATUS.NONE),
+      )
     }
 
     try {
@@ -817,8 +1034,42 @@ export default async function s3Routes(fastify, _opts) {
     }
   })
 
-  fastify.put('/:bucket', authHook, async (_request, reply) => {
+  fastify.put('/:bucket', authHook, async (request, reply) => {
+    const { bucket } = request.params
+    const query = request.query ?? {}
+
     addCorsHeaders(reply)
+
+    if (hasAnyQueryFlag(query, UNSUPPORTED_BUCKET_QUERY_KEYS)) {
+      metrics.requestsTotal.inc({ method: 'PUT', operation: 'bucket_subresource', status_code: 501 })
+      return xmlReply(reply, 501, buildErrorXml('NotImplemented', 'Requested bucket sub-resource is not implemented by this proxy.', request.id))
+    }
+
+    if (hasQueryFlag(query, 'versioning')) {
+      const bucketRecord = ensureBucketExists(bucket)
+      if (!bucketRecord) {
+        metrics.requestsTotal.inc({ method: 'PUT', operation: 'put_bucket_versioning', status_code: 404 })
+        return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', request.id))
+      }
+
+      const payload = (await readRequestBodyBuffer(request, 128 * 1024)).toString('utf8')
+      const versioningStatus = parseVersioningStatusFromXml(payload)
+      if (!versioningStatus) {
+        metrics.requestsTotal.inc({ method: 'PUT', operation: 'put_bucket_versioning', status_code: 400 })
+        return xmlReply(reply, 400, buildErrorXml('MalformedXML', 'VersioningConfiguration must contain Status=Enabled|Suspended.', request.id))
+      }
+
+      setBucketVersioningStatus(bucket, versioningStatus)
+      metrics.requestsTotal.inc({ method: 'PUT', operation: 'put_bucket_versioning', status_code: 200 })
+      return reply.code(200).send('')
+    }
+
+    const creation = ensureBucketActive(bucket, Date.now())
+    if (creation.existed) {
+      metrics.requestsTotal.inc({ method: 'PUT', operation: 'create_bucket', status_code: 409 })
+      return xmlReply(reply, 409, buildErrorXml('BucketAlreadyOwnedByYou', 'Your previous request to create the named bucket succeeded and you already own it.', request.id))
+    }
+
     metrics.requestsTotal.inc({ method: 'PUT', operation: 'create_bucket', status_code: 200 })
     return reply.code(200).send('')
   })
@@ -828,12 +1079,19 @@ export default async function s3Routes(fastify, _opts) {
 
     addCorsHeaders(reply)
 
+    const bucketRecord = ensureBucketExists(bucket)
+    if (!bucketRecord) {
+      metrics.requestsTotal.inc({ method: 'DELETE', operation: 'delete_bucket', status_code: 404 })
+      return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', request.id))
+    }
+
     const hasObjects = listVisibleObjectsPage(bucket, { lowerBound: '', limit: 1 }).length > 0
     if (hasObjects) {
       metrics.requestsTotal.inc({ method: 'DELETE', operation: 'delete_bucket', status_code: 409 })
       return xmlReply(reply, 409, buildErrorXml('BucketNotEmpty', 'The bucket you tried to delete is not empty.', request.id))
     }
 
+    markBucketDeleted(bucket, Date.now())
     metrics.requestsTotal.inc({ method: 'DELETE', operation: 'delete_bucket', status_code: 204 })
     return reply.code(204).send()
   })
@@ -846,6 +1104,11 @@ export default async function s3Routes(fastify, _opts) {
     const query = request.query ?? {}
 
     addCorsHeaders(reply)
+
+    if (!ensureBucketExists(bucket)) {
+      metrics.requestsTotal.inc({ method: 'POST', operation: 'multipart', status_code: 404 })
+      return xmlReply(reply, 404, buildErrorXml('NoSuchBucket', 'The specified bucket does not exist.', reqId))
+    }
 
     if (hasQueryFlag(query, 'uploads')) {
       let target

@@ -17,6 +17,8 @@
  *   ✅ sendAlert({ event:'storage_full'}) → không throw dù WEBHOOK_ALERT_URL=''
  */
 
+import { createHash } from 'crypto'
+import { createServer } from 'http'
 import { mkdirSync } from 'fs'
 
 process.env.PROXY_API_KEY = process.env.PROXY_API_KEY || 'test'
@@ -235,6 +237,116 @@ async function testResignRequestStripsProxyForwardedHeaders() {
   }
 }
 
+async function testResignRequestEncodesSpecialAndUnicodeKeys() {
+  try {
+    const { resignRequest } = await import('../src/utils/sigv4.js')
+
+    const account = {
+      access_key_id: 'AKIATESTKEY123',
+      secret_key: 'testSecretKey456abcdef',
+      endpoint: 'https://testproject.supabase.co/storage/v1/s3',
+      region: 'ap-southeast-1',
+      bucket: 'test-bucket',
+    }
+
+    const unicode = await resignRequest({
+      account,
+      method: 'PUT',
+      path: '/test-bucket/text/unicode-đặng-thái-sơn.txt',
+      headers: { 'content-type': 'text/plain' },
+    })
+
+    const special = await resignRequest({
+      account,
+      method: 'PUT',
+      path: '/test-bucket/special/space key @#$%.txt',
+      headers: { 'content-type': 'text/plain' },
+    })
+
+    if (!unicode.url.includes('/text/unicode-%C4%91%E1%BA%B7ng-th%C3%A1i-s%C6%A1n.txt')) {
+      throw new Error(`Unicode key is not encoded correctly: ${unicode.url}`)
+    }
+
+    if (!special.url.includes('/special/space%20key%20%40%23%24%25.txt')) {
+      throw new Error(`Special-char key is not encoded correctly: ${special.url}`)
+    }
+
+    ok('resignRequest encode dung key unicode + special chars theo RFC3986')
+  } catch (err) {
+    fail('resignRequest encode unicode/special keys', err)
+  }
+}
+
+async function testProxyRequestSignedPayloadUsesBodyHash() {
+  const captures = []
+  let server
+
+  try {
+    const { proxyRequest } = await import('../src/utils/sigv4.js')
+
+    server = createServer(async (req, res) => {
+      const chunks = []
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      }
+      const body = Buffer.concat(chunks)
+      captures.push({
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body,
+      })
+      res.statusCode = 200
+      res.end('ok')
+    })
+
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    const endpoint = `http://127.0.0.1:${address.port}`
+    const payload = Buffer.from('hello-signed')
+
+    const account = {
+      access_key_id: 'AKIATESTKEY123',
+      secret_key: 'testSecretKey456abcdef',
+      endpoint,
+      region: 'ap-southeast-1',
+      bucket: 'ignored',
+      payload_signing_mode: 'signed',
+    }
+
+    const res = await proxyRequest({
+      account,
+      method: 'PUT',
+      path: '/demo-bucket/signed.txt',
+      headers: { 'content-type': 'text/plain' },
+      bodyStream: payload,
+    })
+
+    await res.body.text()
+
+    if (captures.length !== 1) {
+      throw new Error(`Expected 1 upstream request, got ${captures.length}`)
+    }
+
+    const captured = captures[0]
+    const expectedSha256 = createHash('sha256').update(payload).digest('hex')
+    if (captured.headers['x-amz-content-sha256'] !== expectedSha256) {
+      throw new Error(`x-amz-content-sha256 mismatch: got=${captured.headers['x-amz-content-sha256']} expected=${expectedSha256}`)
+    }
+    if (!captured.body.equals(payload)) {
+      throw new Error(`Body mismatch in signed payload mode: got=${captured.body.toString('utf8')}`)
+    }
+
+    ok('proxyRequest signed payload mode ky hash dung theo noi dung body')
+  } catch (err) {
+    fail('proxyRequest signed payload body hash', err)
+  } finally {
+    if (server) {
+      await new Promise((resolve) => server.close(() => resolve()))
+    }
+  }
+}
+
 // ─── Test: withRetry success after 2 fails ───────────────────────────────────
 
 async function testWithRetryPass() {
@@ -382,6 +494,8 @@ async function main() {
   await testResignRequestVirtualHostedStyle()
   await testResignRequestVirtualHostedWithPort()
   await testResignRequestStripsProxyForwardedHeaders()
+  await testResignRequestEncodesSpecialAndUnicodeKeys()
+  await testProxyRequestSignedPayloadUsesBodyHash()
   await testWithRetryPass()
   await testWithRetryNo4xx()
   await testBuildErrorXml()

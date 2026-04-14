@@ -134,6 +134,34 @@ export function buildGetBucketVersioningResult(status = '') {
   return lines.join('\n')
 }
 
+export function buildListAllMyBucketsResult(buckets = [], owner = { id: 's3proxy', displayName: 's3proxy' }) {
+  const bucketNodes = buckets.map((bucket) => {
+    const createdAt = bucket.createdAt
+      ? new Date(bucket.createdAt).toISOString()
+      : new Date().toISOString()
+
+    return [
+      '    <Bucket>',
+      `      <Name>${esc(bucket.name)}</Name>`,
+      `      <CreationDate>${esc(createdAt)}</CreationDate>`,
+      '    </Bucket>',
+    ].join('\n')
+  }).join('\n')
+
+  return [
+    XML_DECLARATION,
+    '<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">',
+    '  <Owner>',
+    `    <ID>${esc(owner.id ?? 's3proxy')}</ID>`,
+    `    <DisplayName>${esc(owner.displayName ?? 's3proxy')}</DisplayName>`,
+    '  </Owner>',
+    '  <Buckets>',
+    bucketNodes,
+    '  </Buckets>',
+    '</ListAllMyBucketsResult>',
+  ].join('\n')
+}
+
 export function buildDeleteObjectsResult(deleted = [], errors = []) {
   const deletedNodes = deleted.map((key) => (
     [

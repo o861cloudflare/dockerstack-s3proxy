@@ -9,6 +9,7 @@ import { mkdirSync, existsSync, unlinkSync } from 'fs'
 process.env.PROXY_API_KEY = process.env.PROXY_API_KEY || 'test'
 process.env.FIREBASE_RTDB_URL = process.env.FIREBASE_RTDB_URL || 'https://dummy.firebaseio.com'
 process.env.FIREBASE_DB_SECRET = process.env.FIREBASE_DB_SECRET || 'dummy'
+process.env.ALLOW_INSECURE_SIGV4_KEY_EXTRACT = 'false'
 const TEST_DB_DIR = '../../.docker-volumes/s3proxy-data'
 process.env.SQLITE_PATH = `${TEST_DB_DIR}/test-server.db`
 process.env.LOG_LEVEL = 'fatal'
@@ -248,6 +249,18 @@ async function main() {
     }
 
     try {
+      const createBucketRes = await fastify.inject({
+        method: 'PUT',
+        url: '/mybucket',
+        headers: { 'x-api-key': 'test' },
+      })
+      assert(createBucketRes.statusCode === 200, `CreateBucket status=${createBucketRes.statusCode}`)
+      ok('PUT /mybucket -> 200 create logical bucket')
+    } catch (err) {
+      fail('PUT /mybucket', err)
+    }
+
+    try {
       const locationRes = await fastify.inject({
         method: 'GET',
         url: '/mybucket?location',
@@ -421,9 +434,9 @@ async function main() {
         method: 'GET',
         url: '/mybucket/path/to/file.txt?X-Amz-Credential=test%2F20260414%2Fap-southeast-1%2Fs3%2Faws4_request&X-Amz-Algorithm=AWS4-HMAC-SHA256',
       })
-      assert(presignedRes.statusCode === 200, `presigned status=${presignedRes.statusCode}`)
-      assert(presignedRes.payload === 'hello world', `presigned payload=${presignedRes.payload}`)
-      ok('Pre-signed query X-Amz-Credential hop le -> 200')
+      assert(presignedRes.statusCode === 403, `presigned status=${presignedRes.statusCode}`)
+      assert(presignedRes.payload.includes('<Code>AccessDenied</Code>'), 'presigned query should be rejected by default')
+      ok('Pre-signed query X-Amz-Credential -> 403 khi che do insecure extract tat')
     } catch (err) {
       fail('Pre-signed query X-Amz-Credential', err)
     }
@@ -433,9 +446,9 @@ async function main() {
         method: 'GET',
         url: '/mybucket/path/to/file.txt?x-amz-credential=test%2F20260414%2Fap-southeast-1%2Fs3%2Faws4_request&x-amz-algorithm=AWS4-HMAC-SHA256',
       })
-      assert(presignedLowercaseRes.statusCode === 200, `presigned lowercase status=${presignedLowercaseRes.statusCode}`)
-      assert(presignedLowercaseRes.payload === 'hello world', `presigned lowercase payload=${presignedLowercaseRes.payload}`)
-      ok('Pre-signed query x-amz-credential (lowercase) -> 200')
+      assert(presignedLowercaseRes.statusCode === 403, `presigned lowercase status=${presignedLowercaseRes.statusCode}`)
+      assert(presignedLowercaseRes.payload.includes('<Code>AccessDenied</Code>'), 'presigned lowercase query should be rejected by default')
+      ok('Pre-signed query x-amz-credential (lowercase) -> 403 khi che do insecure extract tat')
     } catch (err) {
       fail('Pre-signed query x-amz-credential lowercase', err)
     }
