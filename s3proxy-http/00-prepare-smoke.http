@@ -1,0 +1,49 @@
+# S3Proxy verification - 00 Prepare & Smoke
+# Source of flow: s3proxy-http/postman.json
+# Domain-only test (no localhost)
+
+@project_name = {{$dotenv PROJECT_NAME}}
+@domain = {{$dotenv DOMAIN}}
+@health_path = {{$dotenv HEALTH_PATH}}
+@s3proxy_api_key = {{$dotenv S3PROXY_API_KEY}}
+
+# Default base URL from .env PROJECT_NAME -> <project>.dpdns.org
+# If your DOMAIN in .env is already a final/static value, you can switch to:
+# @base_url = https://{{domain}}
+@base_url = https://{{project_name}}.dpdns.org
+
+# Shared run context (keep consistent across all files 00..04)
+@run_id = manual-01
+@logical_bucket = prod-verify-{{run_id}}
+@object_one_key = photos/a.txt
+@object_two_key = photos/2026/b.txt
+@list_prefix = photos/
+@list_common_prefix = photos/2026/
+@multipart_key = uploads/multipart.bin
+@abort_multipart_key = uploads/abort.bin
+@object_one_body = AAAA
+@object_two_body = BB
+@multipart_part_one_body = part-1-
+@multipart_part_two_body = part-2
+@abort_part_body = abort-me
+@expected_multipart_body = {{multipart_part_one_body}}{{multipart_part_two_body}}
+
+###
+# 01. Health + reset run context
+# Expected:
+# - HTTP 200
+# - JSON has keys: status, accounts, routes, rtdb, quota
+GET {{base_url}}{{health_path}}
+Accept: application/json
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 02. Metrics smoke
+# Expected:
+# - HTTP 200
+# - Body contains: s3proxy_requests_total
+# - Body contains: s3proxy_metadata_list_requests_total
+GET {{base_url}}/metrics
+Accept: text/plain
+x-api-key: {{s3proxy_api_key}}
+

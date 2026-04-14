@@ -26,6 +26,9 @@
 //   TAILSCALE_WATCHDOG_DNS_CHECK_ALWAYS true|false (default: false)
 //   TAILSCALE_WATCHDOG_DNS_FIX         true|false (default: false in monitor, true in heal)
 //   TAILSCALE_WATCHDOG_DNS_FIX_ALWAYS  true|false (default: false)
+//   TAILSCALE_WATCHDOG_RECONNECT_MIN_SEC  min seconds between reconnect attempts (default: 60)
+//   TAILSCALE_WATCHDOG_HEAL_AFTER_STREAK  failed cycles before reconnect attempt (default: 2)
+//   TAILSCALE_WATCHDOG_UP_ACCEPT_DNS      pass --accept-dns to tailscale up (default: false)
 //
 //   TAILSCALE_SOCKET                   local API socket path (default: /tmp/tailscaled.sock)
 //   TAILSCALE_BIN                      tailscale binary (default: tailscale)
@@ -151,7 +154,7 @@ async function getTailscaleNetcheck(socketPath) {
 }
 
 function execTailscaleUp({ bin, socketPath, extraArgs, timeoutMs = 35000 }) {
-  const args = ["--socket", socketPath, "up", "--accept-dns=true", ...extraArgs].filter(Boolean);
+  const args = ["--socket", socketPath, "up", ...extraArgs].filter(Boolean);
   return new Promise((resolve) => {
     execFile(bin, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
       resolve({
@@ -310,6 +313,29 @@ function extractDerpHome(status) {
   return null;
 }
 
+function extractSelfIdentity(status) {
+  const self = status && typeof status.Self === "object" && status.Self ? status.Self : {};
+  const tailnet =
+    status && typeof status.CurrentTailnet === "object" && status.CurrentTailnet ? status.CurrentTailnet : {};
+  return {
+    nodeId: pickFirst(self, ["ID", "NodeID", "NodeId", "IDHex"], null),
+    dnsName: pickFirst(self, ["DNSName", "DnsName"], null),
+    hostName: pickFirst(self, ["HostName", "Hostname", "Name"], null),
+    tailnetName: pickFirst(tailnet, ["Name", "Tailnet"], null),
+    magicDnsSuffix: pickFirst(tailnet, ["MagicDNSSuffix", "MagicDnsSuffix"], null),
+  };
+}
+
+function selfIdentityFingerprint(self) {
+  return JSON.stringify([
+    self?.nodeId || "",
+    self?.dnsName || "",
+    self?.hostName || "",
+    self?.tailnetName || "",
+    self?.magicDnsSuffix || "",
+  ]);
+}
+
 async function runHealthCheck({
   mode,
   socketPath,
@@ -324,6 +350,8 @@ async function runHealthCheck({
   dnsCheckAlways,
   dnsFix,
   dnsFixAlways,
+  reconnectMinMs,
+  healAfterStreak,
   state,
 }) {
   const result = {
@@ -332,6 +360,7 @@ async function runHealthCheck({
     online: false,
     ips: [],
     derpHome: null,
+    self: null,
     peerSummary: null,
     reconnectAttempted: false,
     reconnectOk: null,
@@ -366,10 +395,24 @@ async function runHealthCheck({
   result.online = status.Self?.Online === true;
   result.ips = Array.isArray(status.Self?.TailscaleIPs) ? status.Self.TailscaleIPs : [];
   result.derpHome = extractDerpHome(status);
+  result.self = extractSelfIdentity(status);
   result.peerSummary = summarizePeerStatus(status);
   result.statusOk = true;
 
   const healthItems = Array.isArray(status.Health) ? status.Health : [];
+  const selfFingerprint = selfIdentityFingerprint(result.self);
+  const hasIdentityInfo =
+    result.self &&
+    typeof result.self === "object" &&
+    Object.values(result.self).some((v) => v !== null && v !== "");
+  if (hasIdentityInfo && selfFingerprint !== state.lastSelfIdentityFingerprint) {
+    logEvent("info", "TSWD_SELF_IDENTITY", "observed tailscale self identity", {
+      ...result.self,
+      hint: "match nodeId/dnsName with Tailscale admin to avoid stale hostname confusion",
+    });
+    state.lastSelfIdentityFingerprint = selfFingerprint;
+  }
+
   if (healthItems.length > 0 && !arraysEqual(healthItems, state.lastHealth)) {
     healthItems.forEach((msg) => {
       logEvent("warn", "TSWD_HEALTH_WARN", "tailscaled reported health warning", {
@@ -392,6 +435,7 @@ async function runHealthCheck({
       online: result.online,
       ips: result.ips,
       derpHome: result.derpHome,
+      self: result.self,
       peers: result.peerSummary,
     });
     state.lastBackendState = result.backendState;
@@ -435,6 +479,7 @@ async function runHealthCheck({
         online: result.online,
         ips: result.ips,
         derpHome: result.derpHome,
+        self: result.self,
         peers: result.peerSummary,
         health: healthItems,
         dns: dnsInspection
@@ -458,6 +503,7 @@ async function runHealthCheck({
       online: result.online,
       ips: result.ips,
       derpHome: result.derpHome,
+      self: result.self,
     });
     state.notRunningStreak = 0;
   }
@@ -472,10 +518,19 @@ async function runHealthCheck({
         });
         state.authLoggedOnce = true;
       }
+    } else if (state.notRunningStreak < healAfterStreak) {
+      if (state.notRunningStreak === 1 || state.notRunningStreak % alertEvery === 0) {
+        logEvent("info", "TSWD_RECONNECT_WAIT", "waiting before auto-heal attempt", {
+          streak: state.notRunningStreak,
+          healAfterStreak,
+          backendState: result.backendState,
+          online: result.online,
+        });
+      }
     } else {
       const now = Date.now();
       const elapsed = now - (state.lastReconnectAt || 0);
-      if (elapsed > 10_000) {
+      if (elapsed > reconnectMinMs) {
         result.reconnectAttempted = true;
         state.lastReconnectAt = now;
         logEvent("info", "TSWD_RECONNECT_ATTEMPT", "attempting `tailscale up`", {
@@ -566,6 +621,7 @@ async function watchdogLoop(cfg) {
     lastReconnectAt: 0,
     authLoggedOnce: false,
     notRunningStreak: 0,
+    lastSelfIdentityFingerprint: "",
     dnsMissingStreak: 0,
     dnsReadFailStreak: 0,
     tick: 0,
@@ -581,6 +637,9 @@ async function watchdogLoop(cfg) {
     autoReconnect: cfg.autoReconnect,
     dnsCheck: cfg.dnsCheck,
     dnsFix: cfg.dnsFix,
+    reconnectMinSec: cfg.reconnectMinMs / 1000,
+    healAfterStreak: cfg.healAfterStreak,
+    upAcceptDns: cfg.upAcceptDns,
     magicIp: cfg.magicIp,
     resolvConfPath: cfg.resolvConfPath,
   });
@@ -598,6 +657,7 @@ async function watchdogLoop(cfg) {
             online: res.online,
             ips: res.ips,
             derpHome: res.derpHome,
+            self: res.self,
             peers: res.peerSummary,
           });
         }
@@ -652,14 +712,20 @@ async function run() {
   const dnsCheck = toBool(process.env.TAILSCALE_WATCHDOG_DNS_CHECK, true);
   const dnsCheckAlways = toBool(process.env.TAILSCALE_WATCHDOG_DNS_CHECK_ALWAYS, false);
   const dnsFixAlways = toBool(process.env.TAILSCALE_WATCHDOG_DNS_FIX_ALWAYS, false);
+  const reconnectMinSec = toIntMin(process.env.TAILSCALE_WATCHDOG_RECONNECT_MIN_SEC, 60, 10);
+  const healAfterStreak = toIntMin(process.env.TAILSCALE_WATCHDOG_HEAL_AFTER_STREAK, 2, 1);
 
   const socketPath = (process.env.TAILSCALE_SOCKET || "/tmp/tailscaled.sock").trim();
   const bin = (process.env.TAILSCALE_BIN || "tailscale").trim();
   const magicIp = (process.env.TAILSCALE_DNS_MAGIC_IP || "100.100.100.100").trim();
   const resolvConfPath = (process.env.TAILSCALE_RESOLV_CONF || "/etc/resolv.conf").trim();
   const projectName = (process.env.PROJECT_NAME || "").trim();
+  const upAcceptDns = toBool(process.env.TAILSCALE_WATCHDOG_UP_ACCEPT_DNS, false);
   const extraArgsRaw = (process.env.TAILSCALE_UP_EXTRA_ARGS || "").trim();
-  const extraArgs = extraArgsRaw ? extraArgsRaw.split(/\s+/).filter(Boolean) : [];
+  const extraArgs = [
+    `--accept-dns=${upAcceptDns ? "true" : "false"}`,
+    ...(extraArgsRaw ? extraArgsRaw.split(/\s+/).filter(Boolean) : []),
+  ];
 
   const stop = (signal) => {
     logEvent("info", "TSWD_STOP", `received ${signal}, stopping watchdog`);
@@ -679,8 +745,11 @@ async function run() {
     dnsCheckAlways,
     dnsFix,
     dnsFixAlways,
+    reconnectMinMs: reconnectMinSec * 1000,
+    healAfterStreak,
     socketPath,
     bin,
+    upAcceptDns,
     magicIp,
     resolvConfPath,
     extraArgs,

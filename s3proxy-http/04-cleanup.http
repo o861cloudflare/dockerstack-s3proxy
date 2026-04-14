@@ -1,0 +1,74 @@
+# S3Proxy verification - 04 Cleanup
+# Source of flow: s3proxy-http/postman.json
+# Domain-only test (no localhost)
+
+@project_name = {{$dotenv PROJECT_NAME}}
+@domain = {{$dotenv DOMAIN}}
+@s3proxy_api_key = {{$dotenv S3PROXY_API_KEY}}
+
+# Default base URL from .env PROJECT_NAME -> <project>.dpdns.org
+# If your DOMAIN in .env is already a final/static value, you can switch to:
+# @base_url = https://{{domain}}
+@base_url = https://{{project_name}}.dpdns.org
+
+# Shared run context (keep consistent across all files 00..04)
+@run_id = manual-01
+@logical_bucket = prod-verify-{{run_id}}
+@object_one_key = photos/a.txt
+@object_two_key = photos/2026/b.txt
+@multipart_key = uploads/multipart.bin
+
+# Baseline expectations from file 01 defaults:
+@account01_id = acc01
+@account02_id = acc02
+@baseline_account01_used = 0
+@baseline_account02_used = 1
+
+###
+# 26. DELETE object 1
+# Expected:
+# - HTTP 204
+DELETE {{base_url}}/{{logical_bucket}}/{{object_one_key}}
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 27. GET deleted object 1
+# Expected:
+# - HTTP 404
+# - XML has <Code>NoSuchKey</Code>
+GET {{base_url}}/{{logical_bucket}}/{{object_one_key}}
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 28. DELETE object 2
+# Expected:
+# - HTTP 204
+DELETE {{base_url}}/{{logical_bucket}}/{{object_two_key}}
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 29. DELETE multipart object
+# Expected:
+# - HTTP 204
+DELETE {{base_url}}/{{logical_bucket}}/{{multipart_key}}
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 30. DELETE logical bucket
+# Expected:
+# - HTTP 204
+DELETE {{base_url}}/{{logical_bucket}}
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 31. List accounts after cleanup
+# Expected:
+# - HTTP 200
+# - usedBytes returns to baseline:
+#   {{account01_id}}={{baseline_account01_used}}
+#   {{account02_id}}={{baseline_account02_used}}
+GET {{base_url}}/admin/accounts
+Accept: application/json
+x-api-key: {{s3proxy_api_key}}
+

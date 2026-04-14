@@ -1,0 +1,1212 @@
+{
+  "info": {
+    "_postman_id": "d9f35a98-7bd5-4ddf-92db-a599bcf8f0cb",
+    "name": "s3-proxy production verification",
+    "description": "Postman collection for end-to-end verification of the s3-proxy business flow on staging or production.\n\nHow to use:\n1. Fill `baseUrl`, `apiKey`, and both backend account variable groups before running.\n2. Run the collection from top to bottom. The first request resets run-specific bucket/object names so each run is isolated.\n3. The collection bulk-imports two backend accounts, verifies multi-account placement using `/admin/accounts` `usedBytes`, tests core S3 flows (`PUT`, `GET`, `HEAD`, `LIST`, `DELETE`, logical bucket create/delete), and covers both multipart complete and multipart abort.\n4. Cleanup removes the logical bucket and all test objects, but it does not remove the imported backend accounts.\n\nImportant notes:\n- The proxy selects the least-used active account below `QUOTA_THRESHOLD`; it is not strict round-robin.\n- The default `usedBytes` and payload sizes are chosen so object 1 should land on `account01` and object 2 should land on `account02`.\n- In production, `POST /admin/accounts/import` should normally return `rtdbSynced=true`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "x-api-key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "your-proxy-api-key",
+      "type": "string"
+    },
+    {
+      "key": "account01Id",
+      "value": "acc01",
+      "type": "string"
+    },
+    {
+      "key": "account01AccessKeyId",
+      "value": "replace-me-key-01",
+      "type": "string"
+    },
+    {
+      "key": "account01SecretAccessKey",
+      "value": "replace-me-secret-01",
+      "type": "string"
+    },
+    {
+      "key": "account01Endpoint",
+      "value": "https://project-01.supabase.co/storage/v1/s3",
+      "type": "string"
+    },
+    {
+      "key": "account01Region",
+      "value": "ap-southeast-1",
+      "type": "string"
+    },
+    {
+      "key": "account01Bucket",
+      "value": "bucket-01",
+      "type": "string"
+    },
+    {
+      "key": "account01QuotaBytes",
+      "value": "8",
+      "type": "string"
+    },
+    {
+      "key": "account01UsedBytes",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "account02Id",
+      "value": "acc02",
+      "type": "string"
+    },
+    {
+      "key": "account02AccessKeyId",
+      "value": "replace-me-key-02",
+      "type": "string"
+    },
+    {
+      "key": "account02SecretAccessKey",
+      "value": "replace-me-secret-02",
+      "type": "string"
+    },
+    {
+      "key": "account02Endpoint",
+      "value": "https://project-02.supabase.co/storage/v1/s3",
+      "type": "string"
+    },
+    {
+      "key": "account02Region",
+      "value": "ap-southeast-1",
+      "type": "string"
+    },
+    {
+      "key": "account02Bucket",
+      "value": "bucket-02",
+      "type": "string"
+    },
+    {
+      "key": "account02QuotaBytes",
+      "value": "100",
+      "type": "string"
+    },
+    {
+      "key": "account02UsedBytes",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "objectOneBody",
+      "value": "AAAA",
+      "type": "string"
+    },
+    {
+      "key": "objectTwoBody",
+      "value": "BB",
+      "type": "string"
+    },
+    {
+      "key": "multipartPartOneBody",
+      "value": "part-1-",
+      "type": "string"
+    },
+    {
+      "key": "multipartPartTwoBody",
+      "value": "part-2",
+      "type": "string"
+    },
+    {
+      "key": "abortPartBody",
+      "value": "abort-me",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "logicalBucket",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "objectOneKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "objectTwoKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "listPrefix",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "listCommonPrefix",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "multipartKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "abortMultipartKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "expectedMultipartBody",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "baselineAccount01UsedBytes",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "baselineAccount02UsedBytes",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "afterFirstAccount01UsedBytes",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "afterFirstAccount02UsedBytes",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paginationContinuationToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pageOneListedKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "multipartUploadId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "multipartPart01Etag",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "multipartPart02Etag",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "abortMultipartUploadId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Prepare & Smoke",
+      "item": [
+        {
+          "name": "01. Health + reset run context",
+          "request": {
+            "method": "GET",
+            "description": "Smoke check `/health` and regenerate run-specific variables so this collection can be re-run safely on production without object-name collisions.",
+            "url": "{{baseUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runId = `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;",
+                  "pm.collectionVariables.set('runId', runId);",
+                  "pm.collectionVariables.set('logicalBucket', `prod-verify-${runId}`);",
+                  "pm.collectionVariables.set('objectOneKey', 'photos/a.txt');",
+                  "pm.collectionVariables.set('objectTwoKey', 'photos/2026/b.txt');",
+                  "pm.collectionVariables.set('listPrefix', 'photos/');",
+                  "pm.collectionVariables.set('listCommonPrefix', 'photos/2026/');",
+                  "pm.collectionVariables.set('multipartKey', 'uploads/multipart.bin');",
+                  "pm.collectionVariables.set('abortMultipartKey', 'uploads/abort.bin');",
+                  "pm.collectionVariables.set('expectedMultipartBody', `${pm.collectionVariables.get('multipartPartOneBody')}${pm.collectionVariables.get('multipartPartTwoBody')}`);",
+                  "[",
+                  "  'baselineAccount01UsedBytes',",
+                  "  'baselineAccount02UsedBytes',",
+                  "  'afterFirstAccount01UsedBytes',",
+                  "  'afterFirstAccount02UsedBytes',",
+                  "  'paginationContinuationToken',",
+                  "  'pageOneListedKey',",
+                  "  'multipartUploadId',",
+                  "  'multipartPart01Etag',",
+                  "  'multipartPart02Etag',",
+                  "  'abortMultipartUploadId'",
+                  "].forEach((key) => pm.collectionVariables.unset(key));",
+                  "",
+                  "pm.test('Health returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('Health payload contains expected top-level sections', function () {",
+                  "  ['status', 'accounts', 'routes', 'rtdb', 'quota'].forEach((key) => pm.expect(body).to.have.property(key));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02. Metrics smoke",
+          "request": {
+            "method": "GET",
+            "description": "Verify the metrics endpoint is reachable and still exposes the core counters used by operations and metadata-backed listing.",
+            "url": "{{baseUrl}}/metrics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Metrics returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const text = pm.response.text();",
+                  "",
+                  "pm.test('Metrics exposes request and metadata list counters', function () {",
+                  "  pm.expect(text).to.include('s3proxy_requests_total');",
+                  "  pm.expect(text).to.include('s3proxy_metadata_list_requests_total');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 - Admin Accounts",
+      "item": [
+        {
+          "name": "03. Import two backend accounts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "description": "Bulk-import two backend accounts. The default seed values are intentionally chosen to demonstrate least-used placement across two accounts during the next uploads.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accounts\": {\n    \"{{account01Id}}\": {\n      \"accessKeyId\": \"{{account01AccessKeyId}}\",\n      \"secretAccessKey\": \"{{account01SecretAccessKey}}\",\n      \"endpoint\": \"{{account01Endpoint}}\",\n      \"region\": \"{{account01Region}}\",\n      \"bucket\": \"{{account01Bucket}}\",\n      \"quotaBytes\": {{account01QuotaBytes}},\n      \"usedBytes\": {{account01UsedBytes}},\n      \"active\": true\n    },\n    \"{{account02Id}}\": {\n      \"accessKeyId\": \"{{account02AccessKeyId}}\",\n      \"secretAccessKey\": \"{{account02SecretAccessKey}}\",\n      \"endpoint\": \"{{account02Endpoint}}\",\n      \"region\": \"{{account02Region}}\",\n      \"bucket\": \"{{account02Bucket}}\",\n      \"quotaBytes\": {{account02QuotaBytes}},\n      \"usedBytes\": {{account02UsedBytes}},\n      \"active\": true\n    }\n  }\n}"
+            },
+            "url": "{{baseUrl}}/admin/accounts/import"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Account import returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('Exactly two accounts were imported', function () {",
+                  "  pm.expect(body.imported).to.eql(2);",
+                  "});",
+                  "",
+                  "pm.test('RTDB sync succeeded for production import', function () {",
+                  "  pm.expect(body.rtdbSynced).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test('Import response does not leak secrets', function () {",
+                  "  pm.expect(body.accounts.every((account) => !('secretAccessKey' in account) && !('secret_key' in account))).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04. List accounts (baseline)",
+          "request": {
+            "method": "GET",
+            "description": "Read back the imported accounts, verify they were stored with the expected baseline `usedBytes`, and persist those baseline values for later assertions.",
+            "url": "{{baseUrl}}/admin/accounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List accounts returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "const byId = Object.fromEntries((body.accounts || []).map((account) => [account.accountId, account]));",
+                  "const account01Id = pm.collectionVariables.get('account01Id');",
+                  "const account02Id = pm.collectionVariables.get('account02Id');",
+                  "const account01 = byId[account01Id];",
+                  "const account02 = byId[account02Id];",
+                  "const expectedAccount01Used = Number(pm.collectionVariables.get('account01UsedBytes') || 0);",
+                  "const expectedAccount02Used = Number(pm.collectionVariables.get('account02UsedBytes') || 0);",
+                  "",
+                  "pm.test('Both seeded accounts are visible in admin list', function () {",
+                  "  pm.expect(account01).to.be.ok;",
+                  "  pm.expect(account02).to.be.ok;",
+                  "});",
+                  "",
+                  "pm.test('Baseline usedBytes match the imported seed values', function () {",
+                  "  pm.expect(Number(account01.usedBytes)).to.eql(expectedAccount01Used);",
+                  "  pm.expect(Number(account02.usedBytes)).to.eql(expectedAccount02Used);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set('baselineAccount01UsedBytes', String(account01.usedBytes));",
+                  "pm.collectionVariables.set('baselineAccount02UsedBytes', String(account02.usedBytes));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Core S3 CRUD",
+      "item": [
+        {
+          "name": "05. Create logical bucket",
+          "request": {
+            "method": "PUT",
+            "description": "Create the logical bucket used by this test run. This is a metadata-level no-op success, but it is useful as a smoke check for bucket lifecycle semantics.",
+            "url": "{{baseUrl}}/{{logicalBucket}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create bucket returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06. PUT object 1 (expected account01)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain",
+                "type": "text"
+              }
+            ],
+            "description": "Upload object 1. With the default seed values, the least-used selection rule should place this object on `account01`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{{objectOneBody}}"
+            },
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectOneKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('PUT object 1 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07. List accounts after object 1",
+          "request": {
+            "method": "GET",
+            "description": "Verify placement after object 1 by checking that `account01.usedBytes` increased by the payload length while `account02` stayed at baseline.",
+            "url": "{{baseUrl}}/admin/accounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin accounts after object 1 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "const byId = Object.fromEntries((body.accounts || []).map((account) => [account.accountId, account]));",
+                  "const account01Id = pm.collectionVariables.get('account01Id');",
+                  "const account02Id = pm.collectionVariables.get('account02Id');",
+                  "const baseline01 = Number(pm.collectionVariables.get('baselineAccount01UsedBytes') || 0);",
+                  "const baseline02 = Number(pm.collectionVariables.get('baselineAccount02UsedBytes') || 0);",
+                  "const expected01 = baseline01 + (pm.collectionVariables.get('objectOneBody') || '').length;",
+                  "const expected02 = baseline02;",
+                  "",
+                  "pm.test('Object 1 increased account01 usedBytes only', function () {",
+                  "  pm.expect(Number(byId[account01Id].usedBytes)).to.eql(expected01);",
+                  "  pm.expect(Number(byId[account02Id].usedBytes)).to.eql(expected02);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set('afterFirstAccount01UsedBytes', String(byId[account01Id].usedBytes));",
+                  "pm.collectionVariables.set('afterFirstAccount02UsedBytes', String(byId[account02Id].usedBytes));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08. PUT object 2 (expected account02)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain",
+                "type": "text"
+              }
+            ],
+            "description": "Upload object 2. With the default seed values, this upload should move to `account02` because it is now the least-used eligible account.",
+            "body": {
+              "mode": "raw",
+              "raw": "{{objectTwoBody}}"
+            },
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectTwoKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('PUT object 2 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "09. List accounts after object 2",
+          "request": {
+            "method": "GET",
+            "description": "Verify multi-account placement after object 2 by checking that `account02.usedBytes` increased while `account01` stayed at the value observed after object 1.",
+            "url": "{{baseUrl}}/admin/accounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin accounts after object 2 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "const byId = Object.fromEntries((body.accounts || []).map((account) => [account.accountId, account]));",
+                  "const account01Id = pm.collectionVariables.get('account01Id');",
+                  "const account02Id = pm.collectionVariables.get('account02Id');",
+                  "const expected01 = Number(pm.collectionVariables.get('afterFirstAccount01UsedBytes') || 0);",
+                  "const expected02 = Number(pm.collectionVariables.get('afterFirstAccount02UsedBytes') || 0) + (pm.collectionVariables.get('objectTwoBody') || '').length;",
+                  "",
+                  "pm.test('Object 2 increased account02 usedBytes only', function () {",
+                  "  pm.expect(Number(byId[account01Id].usedBytes)).to.eql(expected01);",
+                  "  pm.expect(Number(byId[account02Id].usedBytes)).to.eql(expected02);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. GET object 1",
+          "request": {
+            "method": "GET",
+            "description": "Read back object 1 from the logical bucket.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectOneKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET object 1 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('GET object 1 returns the uploaded body', function () {",
+                  "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('objectOneBody'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. HEAD object 2",
+          "request": {
+            "method": "HEAD",
+            "description": "Verify the proxy can return object headers without a response body.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectTwoKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HEAD object 2 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('HEAD object 2 returns no body', function () {",
+                  "  pm.expect(pm.response.text()).to.eql('');",
+                  "});",
+                  "",
+                  "pm.test('HEAD object 2 exposes content-length', function () {",
+                  "  pm.expect(Number(pm.response.headers.get('Content-Length'))).to.eql((pm.collectionVariables.get('objectTwoBody') || '').length);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. List bucket root",
+          "request": {
+            "method": "GET",
+            "description": "Metadata-backed root `ListObjectsV2` for the logical bucket.",
+            "url": "{{baseUrl}}/{{logicalBucket}}?list-type=2"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Root list returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const text = pm.response.text();",
+                  "",
+                  "pm.test('Root list contains both seeded objects', function () {",
+                  "  pm.expect(text).to.include('<ListBucketResult');",
+                  "  pm.expect(text).to.include(`<Key>${pm.collectionVariables.get('objectOneKey')}</Key>`);",
+                  "  pm.expect(text).to.include(`<Key>${pm.collectionVariables.get('objectTwoKey')}</Key>`);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. List bucket with prefix + delimiter",
+          "request": {
+            "method": "GET",
+            "description": "Verify metadata-backed prefix and delimiter handling (`CommonPrefixes`) for the logical bucket.",
+            "url": "{{baseUrl}}/{{logicalBucket}}?list-type=2&prefix={{listPrefix}}&delimiter=/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Prefix list returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const text = pm.response.text();",
+                  "",
+                  "pm.test('Prefix list includes object and common prefix', function () {",
+                  "  pm.expect(text).to.include(`<Key>${pm.collectionVariables.get('objectOneKey')}</Key>`);",
+                  "  pm.expect(text).to.include(`<Prefix>${pm.collectionVariables.get('listCommonPrefix')}</Prefix>`);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14. List bucket page 1",
+          "request": {
+            "method": "GET",
+            "description": "List with `max-keys=1` and capture `NextContinuationToken` for page 2 verification.",
+            "url": "{{baseUrl}}/{{logicalBucket}}?list-type=2&max-keys=1"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Paged list page 1 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const text = pm.response.text();",
+                  "const keyMatches = [...text.matchAll(/<Key>([^<]+)<\\/Key>/g)].map((match) => match[1]);",
+                  "const tokenMatch = text.match(/<NextContinuationToken>([^<]+)<\\/NextContinuationToken>/);",
+                  "",
+                  "pm.test('Page 1 returns exactly one key', function () {",
+                  "  pm.expect(keyMatches.length).to.eql(1);",
+                  "});",
+                  "",
+                  "pm.test('Page 1 returns a continuation token', function () {",
+                  "  pm.expect(tokenMatch).to.not.eql(null);",
+                  "});",
+                  "",
+                  "pm.collectionVariables.set('pageOneListedKey', keyMatches[0] || '');",
+                  "pm.collectionVariables.set('paginationContinuationToken', tokenMatch ? tokenMatch[1] : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15. List bucket page 2",
+          "request": {
+            "method": "GET",
+            "description": "Use the continuation token captured from page 1 to verify pagination works across metadata-backed listing.",
+            "url": "{{baseUrl}}/{{logicalBucket}}?list-type=2&continuation-token={{paginationContinuationToken}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Paged list page 2 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const text = pm.response.text();",
+                  "const keyMatches = [...text.matchAll(/<Key>([^<]+)<\\/Key>/g)].map((match) => match[1]);",
+                  "const firstPageKey = pm.collectionVariables.get('pageOneListedKey');",
+                  "const expectedKeys = [pm.collectionVariables.get('objectOneKey'), pm.collectionVariables.get('objectTwoKey')];",
+                  "",
+                  "pm.test('Page 2 returns exactly one key', function () {",
+                  "  pm.expect(keyMatches.length).to.eql(1);",
+                  "});",
+                  "",
+                  "pm.test('Page 2 key is different from page 1 and still part of the test set', function () {",
+                  "  pm.expect(keyMatches[0]).to.not.eql(firstPageKey);",
+                  "  pm.expect(expectedKeys).to.include(keyMatches[0]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16. Delete non-empty bucket",
+          "request": {
+            "method": "DELETE",
+            "description": "Logical bucket delete must fail with `409 BucketNotEmpty` while active logical objects still exist.",
+            "url": "{{baseUrl}}/{{logicalBucket}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delete non-empty bucket returns HTTP 409', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "});",
+                  "",
+                  "pm.test('Delete non-empty bucket returns BucketNotEmpty XML', function () {",
+                  "  pm.expect(pm.response.text()).to.include('<Code>BucketNotEmpty</Code>');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Multipart",
+      "item": [
+        {
+          "name": "17. Initiate multipart upload",
+          "request": {
+            "method": "POST",
+            "description": "Start a multipart upload and capture `UploadId` for subsequent part uploads and completion.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{multipartKey}}?uploads"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Initiate multipart returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const match = pm.response.text().match(/<UploadId>([^<]+)<\\/UploadId>/);",
+                  "pm.collectionVariables.set('multipartUploadId', match ? match[1] : '');",
+                  "",
+                  "pm.test('Multipart UploadId was captured', function () {",
+                  "  pm.expect(pm.collectionVariables.get('multipartUploadId')).to.be.ok;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18. Upload multipart part 1",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              }
+            ],
+            "description": "Upload multipart part 1 and capture the upstream ETag needed for completion.",
+            "body": {
+              "mode": "raw",
+              "raw": "{{multipartPartOneBody}}"
+            },
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{multipartKey}}?uploadId={{multipartUploadId}}&partNumber=1"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Multipart part 1 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const etag = pm.response.headers.get('ETag') || '';",
+                  "pm.collectionVariables.set('multipartPart01Etag', etag);",
+                  "",
+                  "pm.test('Multipart part 1 ETag was captured', function () {",
+                  "  pm.expect(etag).to.be.ok;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19. Upload multipart part 2",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              }
+            ],
+            "description": "Upload multipart part 2 and capture its ETag.",
+            "body": {
+              "mode": "raw",
+              "raw": "{{multipartPartTwoBody}}"
+            },
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{multipartKey}}?uploadId={{multipartUploadId}}&partNumber=2"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Multipart part 2 returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const etag = pm.response.headers.get('ETag') || '';",
+                  "pm.collectionVariables.set('multipartPart02Etag', etag);",
+                  "",
+                  "pm.test('Multipart part 2 ETag was captured', function () {",
+                  "  pm.expect(etag).to.be.ok;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "20. Complete multipart upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/xml",
+                "type": "text"
+              }
+            ],
+            "description": "Complete the multipart upload using the captured part ETags so the proxy commits logical metadata after upstream success.",
+            "body": {
+              "mode": "raw",
+              "raw": "<CompleteMultipartUpload>\n  <Part>\n    <PartNumber>1</PartNumber>\n    <ETag>{{multipartPart01Etag}}</ETag>\n  </Part>\n  <Part>\n    <PartNumber>2</PartNumber>\n    <ETag>{{multipartPart02Etag}}</ETag>\n  </Part>\n</CompleteMultipartUpload>"
+            },
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{multipartKey}}?uploadId={{multipartUploadId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Complete multipart returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Complete multipart returns XML result', function () {",
+                  "  pm.expect(pm.response.text()).to.include('<CompleteMultipartUploadResult>');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "21. GET multipart object",
+          "request": {
+            "method": "GET",
+            "description": "Verify the completed multipart object is now readable through the logical proxy path.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{multipartKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET multipart object returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('GET multipart object returns the concatenated part body', function () {",
+                  "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('expectedMultipartBody'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "22. Initiate abort-multipart flow",
+          "request": {
+            "method": "POST",
+            "description": "Start a second multipart upload that will be aborted instead of completed.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{abortMultipartKey}}?uploads"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Abort flow initiate returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const match = pm.response.text().match(/<UploadId>([^<]+)<\\/UploadId>/);",
+                  "pm.collectionVariables.set('abortMultipartUploadId', match ? match[1] : '');",
+                  "",
+                  "pm.test('Abort flow UploadId was captured', function () {",
+                  "  pm.expect(pm.collectionVariables.get('abortMultipartUploadId')).to.be.ok;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "23. Upload abort flow part 1",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream",
+                "type": "text"
+              }
+            ],
+            "description": "Upload one multipart part before aborting the upload.",
+            "body": {
+              "mode": "raw",
+              "raw": "{{abortPartBody}}"
+            },
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{abortMultipartKey}}?uploadId={{abortMultipartUploadId}}&partNumber=1"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Abort flow part upload returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "24. Abort multipart upload",
+          "request": {
+            "method": "DELETE",
+            "description": "Abort the second multipart upload and verify the proxy treats it as a successful cleanup path.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{abortMultipartKey}}?uploadId={{abortMultipartUploadId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Abort multipart returns HTTP 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "25. GET aborted multipart object",
+          "request": {
+            "method": "GET",
+            "description": "Aborted multipart uploads should not be visible as logical objects.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{abortMultipartKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET aborted multipart object returns HTTP 404', function () {",
+                  "  pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('GET aborted multipart object returns NoSuchKey XML', function () {",
+                  "  pm.expect(pm.response.text()).to.include('<Code>NoSuchKey</Code>');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Cleanup",
+      "item": [
+        {
+          "name": "26. DELETE object 1",
+          "request": {
+            "method": "DELETE",
+            "description": "Delete object 1 and leave a tombstone in metadata.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectOneKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('DELETE object 1 returns HTTP 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "27. GET deleted object 1",
+          "request": {
+            "method": "GET",
+            "description": "Deleted objects must stop resolving through the logical bucket immediately.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectOneKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET deleted object 1 returns HTTP 404', function () {",
+                  "  pm.response.to.have.status(404);",
+                  "});",
+                  "",
+                  "pm.test('GET deleted object 1 returns NoSuchKey XML', function () {",
+                  "  pm.expect(pm.response.text()).to.include('<Code>NoSuchKey</Code>');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "28. DELETE object 2",
+          "request": {
+            "method": "DELETE",
+            "description": "Delete object 2.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{objectTwoKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('DELETE object 2 returns HTTP 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "29. DELETE multipart object",
+          "request": {
+            "method": "DELETE",
+            "description": "Delete the completed multipart object before removing the logical bucket.",
+            "url": "{{baseUrl}}/{{logicalBucket}}/{{multipartKey}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('DELETE multipart object returns HTTP 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "30. DELETE logical bucket",
+          "request": {
+            "method": "DELETE",
+            "description": "Delete the logical bucket after all active objects have been removed.",
+            "url": "{{baseUrl}}/{{logicalBucket}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('DELETE empty logical bucket returns HTTP 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "31. List accounts after cleanup",
+          "request": {
+            "method": "GET",
+            "description": "Final verification that account `usedBytes` returned to the imported baseline after all test objects were deleted.",
+            "url": "{{baseUrl}}/admin/accounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Final admin accounts returns HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "const byId = Object.fromEntries((body.accounts || []).map((account) => [account.accountId, account]));",
+                  "const account01Id = pm.collectionVariables.get('account01Id');",
+                  "const account02Id = pm.collectionVariables.get('account02Id');",
+                  "const baseline01 = Number(pm.collectionVariables.get('baselineAccount01UsedBytes') || 0);",
+                  "const baseline02 = Number(pm.collectionVariables.get('baselineAccount02UsedBytes') || 0);",
+                  "",
+                  "pm.test('usedBytes returned to baseline after cleanup', function () {",
+                  "  pm.expect(Number(byId[account01Id].usedBytes)).to.eql(baseline01);",
+                  "  pm.expect(Number(byId[account02Id].usedBytes)).to.eql(baseline02);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

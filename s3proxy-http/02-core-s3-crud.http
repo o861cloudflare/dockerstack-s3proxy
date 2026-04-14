@@ -1,0 +1,152 @@
+# S3Proxy verification - 02 Core S3 CRUD
+# Source of flow: s3proxy-http/postman.json
+# Domain-only test (no localhost)
+
+@project_name = {{$dotenv PROJECT_NAME}}
+@domain = {{$dotenv DOMAIN}}
+@s3proxy_api_key = {{$dotenv S3PROXY_API_KEY}}
+
+# Default base URL from .env PROJECT_NAME -> <project>.dpdns.org
+# If your DOMAIN in .env is already a final/static value, you can switch to:
+# @base_url = https://{{domain}}
+@base_url = https://{{project_name}}.dpdns.org
+
+# Shared run context (keep consistent across all files 00..04)
+@run_id = manual-01
+@logical_bucket = prod-verify-{{run_id}}
+@object_one_key = photos/a.txt
+@object_two_key = photos/2026/b.txt
+@list_prefix = photos/
+@list_common_prefix = photos/2026/
+@object_one_body = AAAA
+@object_two_body = BB
+
+# Expected usedBytes after writes (based on defaults from file 01)
+# account01 baseline 0 + len(AAAA=4) => 4
+# account02 baseline 1 + len(BB=2)   => 3
+@account01_id = acc01
+@account02_id = acc02
+@expected_after_object_1_account01_used = 4
+@expected_after_object_1_account02_used = 1
+@expected_after_object_2_account01_used = 4
+@expected_after_object_2_account02_used = 3
+
+# For request 15, copy from request 14 response:
+# <NextContinuationToken>...</NextContinuationToken>
+@pagination_continuation_token = REPLACE_FROM_REQUEST_14
+
+###
+# 05. Create logical bucket
+# Expected:
+# - HTTP 200
+PUT {{base_url}}/{{logical_bucket}}
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 06. PUT object 1 (expected account01)
+# Expected:
+# - HTTP 200
+PUT {{base_url}}/{{logical_bucket}}/{{object_one_key}}
+Content-Type: text/plain
+x-api-key: {{s3proxy_api_key}}
+
+{{object_one_body}}
+
+###
+# 07. List accounts after object 1
+# Expected:
+# - HTTP 200
+# - {{account01_id}}.usedBytes = {{expected_after_object_1_account01_used}}
+# - {{account02_id}}.usedBytes = {{expected_after_object_1_account02_used}}
+GET {{base_url}}/admin/accounts
+Accept: application/json
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 08. PUT object 2 (expected account02)
+# Expected:
+# - HTTP 200
+PUT {{base_url}}/{{logical_bucket}}/{{object_two_key}}
+Content-Type: text/plain
+x-api-key: {{s3proxy_api_key}}
+
+{{object_two_body}}
+
+###
+# 09. List accounts after object 2
+# Expected:
+# - HTTP 200
+# - {{account01_id}}.usedBytes = {{expected_after_object_2_account01_used}}
+# - {{account02_id}}.usedBytes = {{expected_after_object_2_account02_used}}
+GET {{base_url}}/admin/accounts
+Accept: application/json
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 10. GET object 1
+# Expected:
+# - HTTP 200
+# - Body = {{object_one_body}}
+GET {{base_url}}/{{logical_bucket}}/{{object_one_key}}
+Accept: */*
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 11. HEAD object 2
+# Expected:
+# - HTTP 200
+# - Empty body
+# - Content-Length = 2
+HEAD {{base_url}}/{{logical_bucket}}/{{object_two_key}}
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 12. List bucket root
+# Expected:
+# - HTTP 200
+# - XML has <ListBucketResult>
+# - XML has keys: {{object_one_key}} and {{object_two_key}}
+GET {{base_url}}/{{logical_bucket}}?list-type=2
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 13. List bucket with prefix + delimiter
+# Expected:
+# - HTTP 200
+# - XML has key {{object_one_key}}
+# - XML has common prefix {{list_common_prefix}}
+GET {{base_url}}/{{logical_bucket}}?list-type=2&prefix={{list_prefix}}&delimiter=/
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 14. List bucket page 1
+# Expected:
+# - HTTP 200
+# - Exactly 1 <Key>
+# - Has <NextContinuationToken>
+GET {{base_url}}/{{logical_bucket}}?list-type=2&max-keys=1
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 15. List bucket page 2
+# Expected:
+# - HTTP 200
+# - Exactly 1 <Key>
+# - Returned key is the other test key (different from page 1)
+GET {{base_url}}/{{logical_bucket}}?list-type=2&continuation-token={{pagination_continuation_token}}
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 16. Delete non-empty bucket
+# Expected:
+# - HTTP 409
+# - XML has <Code>BucketNotEmpty</Code>
+DELETE {{base_url}}/{{logical_bucket}}
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+

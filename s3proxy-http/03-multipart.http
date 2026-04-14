@@ -1,0 +1,125 @@
+# S3Proxy verification - 03 Multipart
+# Source of flow: s3proxy-http/postman.json
+# Domain-only test (no localhost)
+
+@project_name = {{$dotenv PROJECT_NAME}}
+@domain = {{$dotenv DOMAIN}}
+@s3proxy_api_key = {{$dotenv S3PROXY_API_KEY}}
+
+# Default base URL from .env PROJECT_NAME -> <project>.dpdns.org
+# If your DOMAIN in .env is already a final/static value, you can switch to:
+# @base_url = https://{{domain}}
+@base_url = https://{{project_name}}.dpdns.org
+
+# Shared run context (keep consistent across all files 00..04)
+@run_id = manual-01
+@logical_bucket = prod-verify-{{run_id}}
+@multipart_key = uploads/multipart.bin
+@abort_multipart_key = uploads/abort.bin
+@multipart_part_one_body = part-1-
+@multipart_part_two_body = part-2
+@abort_part_body = abort-me
+@expected_multipart_body = {{multipart_part_one_body}}{{multipart_part_two_body}}
+
+# Copy values from previous responses:
+@multipart_upload_id = REPLACE_FROM_REQUEST_17_UPLOAD_ID
+@multipart_part_01_etag = REPLACE_FROM_REQUEST_18_ETAG
+@multipart_part_02_etag = REPLACE_FROM_REQUEST_19_ETAG
+@abort_multipart_upload_id = REPLACE_FROM_REQUEST_22_UPLOAD_ID
+
+###
+# 17. Initiate multipart upload
+# Expected:
+# - HTTP 200
+# - XML has <UploadId>...</UploadId> (copy to @multipart_upload_id)
+POST {{base_url}}/{{logical_bucket}}/{{multipart_key}}?uploads
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 18. Upload multipart part 1
+# Expected:
+# - HTTP 200
+# - Response header has ETag (copy to @multipart_part_01_etag)
+PUT {{base_url}}/{{logical_bucket}}/{{multipart_key}}?uploadId={{multipart_upload_id}}&partNumber=1
+Content-Type: application/octet-stream
+x-api-key: {{s3proxy_api_key}}
+
+{{multipart_part_one_body}}
+
+###
+# 19. Upload multipart part 2
+# Expected:
+# - HTTP 200
+# - Response header has ETag (copy to @multipart_part_02_etag)
+PUT {{base_url}}/{{logical_bucket}}/{{multipart_key}}?uploadId={{multipart_upload_id}}&partNumber=2
+Content-Type: application/octet-stream
+x-api-key: {{s3proxy_api_key}}
+
+{{multipart_part_two_body}}
+
+###
+# 20. Complete multipart upload
+# Expected:
+# - HTTP 200
+# - XML has <CompleteMultipartUploadResult>
+POST {{base_url}}/{{logical_bucket}}/{{multipart_key}}?uploadId={{multipart_upload_id}}
+Content-Type: application/xml
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+<CompleteMultipartUpload>
+  <Part>
+    <PartNumber>1</PartNumber>
+    <ETag>{{multipart_part_01_etag}}</ETag>
+  </Part>
+  <Part>
+    <PartNumber>2</PartNumber>
+    <ETag>{{multipart_part_02_etag}}</ETag>
+  </Part>
+</CompleteMultipartUpload>
+
+###
+# 21. GET multipart object
+# Expected:
+# - HTTP 200
+# - Body = {{expected_multipart_body}}
+GET {{base_url}}/{{logical_bucket}}/{{multipart_key}}
+Accept: */*
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 22. Initiate abort-multipart flow
+# Expected:
+# - HTTP 200
+# - XML has <UploadId>...</UploadId> (copy to @abort_multipart_upload_id)
+POST {{base_url}}/{{logical_bucket}}/{{abort_multipart_key}}?uploads
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 23. Upload abort flow part 1
+# Expected:
+# - HTTP 200
+PUT {{base_url}}/{{logical_bucket}}/{{abort_multipart_key}}?uploadId={{abort_multipart_upload_id}}&partNumber=1
+Content-Type: application/octet-stream
+x-api-key: {{s3proxy_api_key}}
+
+{{abort_part_body}}
+
+###
+# 24. Abort multipart upload
+# Expected:
+# - HTTP 204
+DELETE {{base_url}}/{{logical_bucket}}/{{abort_multipart_key}}?uploadId={{abort_multipart_upload_id}}
+x-api-key: {{s3proxy_api_key}}
+
+###
+# 25. GET aborted multipart object
+# Expected:
+# - HTTP 404
+# - XML has <Code>NoSuchKey</Code>
+GET {{base_url}}/{{logical_bucket}}/{{abort_multipart_key}}
+Accept: application/xml
+x-api-key: {{s3proxy_api_key}}
+

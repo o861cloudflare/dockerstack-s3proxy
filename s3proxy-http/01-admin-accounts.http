@@ -1,0 +1,86 @@
+# S3Proxy verification - 01 Admin Accounts
+# Source of flow: s3proxy-http/postman.json
+# Domain-only test (no localhost)
+
+@project_name = {{$dotenv PROJECT_NAME}}
+@domain = {{$dotenv DOMAIN}}
+@s3proxy_api_key = {{$dotenv S3PROXY_API_KEY}}
+
+# Default base URL from .env PROJECT_NAME -> <project>.dpdns.org
+# If your DOMAIN in .env is already a final/static value, you can switch to:
+# @base_url = https://{{domain}}
+@base_url = https://{{project_name}}.dpdns.org
+
+# Shared run context (keep consistent across all files 00..04)
+@run_id = manual-01
+@logical_bucket = prod-verify-{{run_id}}
+@object_one_key = photos/a.txt
+@object_two_key = photos/2026/b.txt
+@object_one_body = AAAA
+@object_two_body = BB
+
+# Backend accounts (replace with real credentials/endpoints)
+@account01_id = acc01
+@account01_access_key_id = replace-me-key-01
+@account01_secret_access_key = replace-me-secret-01
+@account01_endpoint = https://project-01.supabase.co/storage/v1/s3
+@account01_region = ap-southeast-1
+@account01_bucket = bucket-01
+@account01_quota_bytes = 8
+@account01_used_bytes = 0
+
+@account02_id = acc02
+@account02_access_key_id = replace-me-key-02
+@account02_secret_access_key = replace-me-secret-02
+@account02_endpoint = https://project-02.supabase.co/storage/v1/s3
+@account02_region = ap-southeast-1
+@account02_bucket = bucket-02
+@account02_quota_bytes = 100
+@account02_used_bytes = 1
+
+###
+# 03. Import two backend accounts
+# Expected:
+# - HTTP 200
+# - JSON imported = 2
+# - JSON rtdbSynced = true
+# - Response accounts do NOT expose secretAccessKey
+POST {{base_url}}/admin/accounts/import
+Content-Type: application/json
+x-api-key: {{s3proxy_api_key}}
+
+{
+  "accounts": {
+    "{{account01_id}}": {
+      "accessKeyId": "{{account01_access_key_id}}",
+      "secretAccessKey": "{{account01_secret_access_key}}",
+      "endpoint": "{{account01_endpoint}}",
+      "region": "{{account01_region}}",
+      "bucket": "{{account01_bucket}}",
+      "quotaBytes": {{account01_quota_bytes}},
+      "usedBytes": {{account01_used_bytes}},
+      "active": true
+    },
+    "{{account02_id}}": {
+      "accessKeyId": "{{account02_access_key_id}}",
+      "secretAccessKey": "{{account02_secret_access_key}}",
+      "endpoint": "{{account02_endpoint}}",
+      "region": "{{account02_region}}",
+      "bucket": "{{account02_bucket}}",
+      "quotaBytes": {{account02_quota_bytes}},
+      "usedBytes": {{account02_used_bytes}},
+      "active": true
+    }
+  }
+}
+
+###
+# 04. List accounts (baseline)
+# Expected:
+# - HTTP 200
+# - accounts include both {{account01_id}} and {{account02_id}}
+# - usedBytes baseline: {{account01_id}}={{account01_used_bytes}}, {{account02_id}}={{account02_used_bytes}}
+GET {{base_url}}/admin/accounts
+Accept: application/json
+x-api-key: {{s3proxy_api_key}}
+

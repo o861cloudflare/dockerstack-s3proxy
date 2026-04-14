@@ -1,0 +1,8 @@
+FROM tailscale/tailscale:stable
+
+# Keep watchdog runtime simple: tailscale CLI is already present in this image.
+RUN apk add --no-cache nodejs npm
+
+WORKDIR /workspace
+
+CMD ["node", "/workspace/tailscale/tailscale-watchdog.js"]

@@ -75,7 +75,7 @@ services:
       TS_SERVE_CONFIG: /config/serve/serve.json
       TS_EXTRA_ARGS: >-
         --advertise-tags=${TAILSCALE_TAGS:-tag:container}
-        --accept-dns=true
+        --accept-dns=${TAILSCALE_ACCEPT_DNS:-false}
         --accept-routes
       TS_STATE_DIR: /var/lib/tailscale
     volumes:
@@ -98,13 +98,13 @@ services:
       tailscale-keep-ip-prepare-windows:
         condition: service_completed_successfully
     environment:
-      TAILSCALE_AUTHKEY: "${TAILSCALE_AUTHKEY:-}"
+      TS_AUTHKEY: "${TAILSCALE_AUTHKEY:-}"
       TS_USERSPACE: "true"
       TS_SOCKET: "${TAILSCALE_SOCKET:-/tmp/tailscaled.sock}"
       TS_SERVE_CONFIG: /config/serve/serve.json
       TS_EXTRA_ARGS: >-
         --advertise-tags=${TAILSCALE_TAGS:-tag:container}
-        --accept-dns=true
+        --accept-dns=${TAILSCALE_ACCEPT_DNS:-false}
       TS_STATE_DIR: /var/lib/tailscale
     volumes:
       - ${DOCKER_VOLUMES_ROOT:-./.docker-volumes}/tailscale/var-lib:/var/lib/tailscale
@@ -116,20 +116,25 @@ services:
   # ── Watchdog (Linux profile): monitor tailscale status/log only ───────
   tailscale-watchdog-linux:
     profiles: [tailscale-linux]
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: tailscale/Dockerfile.watchdog
     depends_on:
       tailscale-linux:
         condition: service_started
     command: ["node", "/workspace/tailscale/tailscale-watchdog.js"]
     environment:
-      TAILSCALE_WATCHDOG_MODE: "${TAILSCALE_WATCHDOG_MODE:-monitor}"
+      TAILSCALE_WATCHDOG_MODE: "${TAILSCALE_WATCHDOG_MODE:-heal}"
       TAILSCALE_WATCHDOG_INTERVAL_SEC: "${TAILSCALE_WATCHDOG_INTERVAL_SEC:-30}"
       TAILSCALE_WATCHDOG_ALERT_EVERY: "${TAILSCALE_WATCHDOG_ALERT_EVERY:-5}"
       TAILSCALE_WATCHDOG_LOG_OK_EVERY: "${TAILSCALE_WATCHDOG_LOG_OK_EVERY:-10}"
       TAILSCALE_WATCHDOG_NETCHECK: "${TAILSCALE_WATCHDOG_NETCHECK:-true}"
+      TAILSCALE_WATCHDOG_RECONNECT_MIN_SEC: "${TAILSCALE_WATCHDOG_RECONNECT_MIN_SEC:-60}"
+      TAILSCALE_WATCHDOG_HEAL_AFTER_STREAK: "${TAILSCALE_WATCHDOG_HEAL_AFTER_STREAK:-2}"
+      TAILSCALE_WATCHDOG_UP_ACCEPT_DNS: "${TAILSCALE_WATCHDOG_UP_ACCEPT_DNS:-false}"
       # Sidecar cannot safely inspect tailscale container resolv.conf; use health/netcheck instead.
       TAILSCALE_WATCHDOG_DNS_CHECK: "${TAILSCALE_WATCHDOG_DNS_CHECK:-false}"
-      TAILSCALE_WATCHDOG_AUTO_RECONNECT: "false"
+      TAILSCALE_WATCHDOG_AUTO_RECONNECT: "true"
       TAILSCALE_WATCHDOG_DNS_FIX: "false"
       TAILSCALE_SOCKET: "${TAILSCALE_SOCKET:-/tmp/tailscaled.sock}"
       PROJECT_NAME: "${PROJECT_NAME:-myapp}"
@@ -143,20 +148,25 @@ services:
   # ── Watchdog (Windows profile): monitor tailscale status/log only ─────
   tailscale-watchdog-windows:
     profiles: [tailscale-windows]
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: tailscale/Dockerfile.watchdog
     depends_on:
       tailscale-windows:
         condition: service_started
     command: ["node", "/workspace/tailscale/tailscale-watchdog.js"]
     environment:
-      TAILSCALE_WATCHDOG_MODE: "${TAILSCALE_WATCHDOG_MODE:-monitor}"
+      TAILSCALE_WATCHDOG_MODE: "${TAILSCALE_WATCHDOG_MODE:-heal}"
       TAILSCALE_WATCHDOG_INTERVAL_SEC: "${TAILSCALE_WATCHDOG_INTERVAL_SEC:-30}"
       TAILSCALE_WATCHDOG_ALERT_EVERY: "${TAILSCALE_WATCHDOG_ALERT_EVERY:-5}"
       TAILSCALE_WATCHDOG_LOG_OK_EVERY: "${TAILSCALE_WATCHDOG_LOG_OK_EVERY:-10}"
       TAILSCALE_WATCHDOG_NETCHECK: "${TAILSCALE_WATCHDOG_NETCHECK:-true}"
+      TAILSCALE_WATCHDOG_RECONNECT_MIN_SEC: "${TAILSCALE_WATCHDOG_RECONNECT_MIN_SEC:-60}"
+      TAILSCALE_WATCHDOG_HEAL_AFTER_STREAK: "${TAILSCALE_WATCHDOG_HEAL_AFTER_STREAK:-2}"
+      TAILSCALE_WATCHDOG_UP_ACCEPT_DNS: "${TAILSCALE_WATCHDOG_UP_ACCEPT_DNS:-false}"
       # Sidecar cannot safely inspect tailscale container resolv.conf; use health/netcheck instead.
       TAILSCALE_WATCHDOG_DNS_CHECK: "${TAILSCALE_WATCHDOG_DNS_CHECK:-false}"
-      TAILSCALE_WATCHDOG_AUTO_RECONNECT: "false"
+      TAILSCALE_WATCHDOG_AUTO_RECONNECT: "true"
       TAILSCALE_WATCHDOG_DNS_FIX: "false"
       TAILSCALE_SOCKET: "${TAILSCALE_SOCKET:-/tmp/tailscaled.sock}"
       PROJECT_NAME: "${PROJECT_NAME:-myapp}"
