@@ -5,11 +5,17 @@
 
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import config from './config.js'
+import { resolveS3SigningRegion } from './s3Signing.js'
 
 export function createS3Client(account) {
-  return new S3Client({
+  const signingRegion = resolveS3SigningRegion({
     endpoint: account.endpoint,
     region: account.region,
+  })
+
+  return new S3Client({
+    endpoint: account.endpoint,
+    region: signingRegion,
     credentials: {
       accessKeyId: account.access_key_id,
       secretAccessKey: account.secret_key,

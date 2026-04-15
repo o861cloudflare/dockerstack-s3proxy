@@ -35,6 +35,7 @@ import {
   saveCronJob,
 } from '../cronScheduler.js'
 import { createS3Client } from '../inventoryScanner.js'
+import { resolveS3SigningRegion } from '../s3Signing.js'
 import {
   isEmailOwner,
   isSupabaseAccessToken,
@@ -722,6 +723,22 @@ export default async function adminRoutes(fastify, _opts) {
       })
     }
 
+    const originalRegion = normalized.row.region
+    const signingRegion = resolveS3SigningRegion({
+      endpoint: normalized.row.endpoint,
+      region: originalRegion,
+    })
+    const regionWasNormalized = signingRegion !== originalRegion
+    if (regionWasNormalized) {
+      normalized.row.region = signingRegion
+      request.log.info({
+        accountId: normalized.row.account_id,
+        endpoint: normalized.row.endpoint,
+        regionInput: originalRegion,
+        regionApplied: signingRegion,
+      }, 'admin account signing region normalized')
+    }
+
     request.log.info({
       account: toSafeAccountLog(normalized.row),
       existing: Boolean(existing),
@@ -731,6 +748,7 @@ export default async function adminRoutes(fastify, _opts) {
       accountId: normalized.row.account_id,
       bucket: normalized.row.bucket,
       endpoint: normalized.row.endpoint,
+      region: normalized.row.region,
     }, 'admin account bucket verification started')
 
     const bucketVerification = await verifyBucketExists(normalized.row, request.log)
@@ -776,6 +794,9 @@ export default async function adminRoutes(fastify, _opts) {
 
     let rtdbSynced = true
     const warnings = []
+    if (regionWasNormalized) {
+      warnings.push(`Region normalized for Supabase S3 signing: ${originalRegion} -> ${signingRegion}`)
+    }
     if (bucketWarning) warnings.push(bucketWarning)
     try {
       await rtdbBatchPatch(updates)

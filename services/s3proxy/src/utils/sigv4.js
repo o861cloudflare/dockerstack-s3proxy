@@ -13,6 +13,7 @@ import { SignatureV4 } from '@aws-sdk/signature-v4'
 import { HttpRequest } from '@smithy/protocol-http'
 import { Sha256 } from '@aws-crypto/sha256-js'
 import { request as undiciRequest } from 'undici'
+import { resolveS3SigningRegion } from '../s3Signing.js'
 
 // Headers that must be stripped from incoming client request before re-signing
 const STRIP_HEADERS = new Set([
@@ -161,6 +162,10 @@ export async function resignRequest({ account, method, path, query = {}, headers
   const endpointUrl = target.endpointUrl
   const signedPath = target.path
   const host = endpointUrl.port ? `${target.hostname}:${endpointUrl.port}` : target.hostname
+  const signingRegion = resolveS3SigningRegion({
+    endpoint: account.endpoint,
+    region: account.region,
+  })
 
   // Build clean headers (strip AWS auth headers, keep relevant ones)
   const cleanHeaders = {}
@@ -197,7 +202,7 @@ export async function resignRequest({ account, method, path, query = {}, headers
       accessKeyId:     account.access_key_id,
       secretAccessKey: account.secret_key,
     },
-    region:  account.region || 'auto',
+    region:  signingRegion,
     service: 's3',
     sha256:  Sha256,
     // S3 canonical URI must not be double-escaped. We already provide

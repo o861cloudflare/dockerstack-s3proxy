@@ -3,6 +3,8 @@
  * Parse Supabase S3 text blobs and optionally enrich them via Supabase Management API.
  */
 
+import { resolveS3SigningRegion } from './s3Signing.js'
+
 const SUPABASE_MANAGEMENT_BASE_URL = 'https://api.supabase.com/v1'
 const SUPABASE_ACCESS_TOKEN_REGEX = /^sbp_(?:[a-z0-9]+_)?[a-z0-9]{20,}$/i
 const SUPABASE_ACCESS_TOKEN_SCAN_REGEX = /\bsbp_(?:[a-z0-9]+_)?[a-z0-9]{20,}\b/gi
@@ -425,13 +427,18 @@ function normalizeBucketItems(payload) {
 export function createAccountDraftFromSupabase(preview, options = {}) {
   const extracted = preview?.extracted || {}
   const bucketName = sanitizeBucketName(options.bucketName || extracted.bucketName || '') || ''
+  const requestedRegion = normalizeString(extracted.region || options.region || 'us-east-1')
+  const signingRegion = resolveS3SigningRegion({
+    endpoint: extracted.endpoint,
+    region: requestedRegion,
+  })
 
   return {
     accountId: normalizeString(extracted.accountId || ''),
     accessKeyId: normalizeString(extracted.accessKeyId || ''),
     secretAccessKey: normalizeString(extracted.secretAccessKey || ''),
     endpoint: normalizeString(extracted.endpoint || ''),
-    region: normalizeString(extracted.region || options.region || 'ap-southeast-1'),
+    region: signingRegion,
     bucket: bucketName,
     addressingStyle: 'path',
     payloadSigningMode: 'unsigned',
@@ -565,6 +572,13 @@ export async function previewSupabaseS3(rawInput, options = {}) {
       bucketName: bucketResolved || undefined,
       region: normalizeString(matchedProject?.region || ''),
     })
+    const projectRegion = normalizeString(matchedProject?.region || '')
+    if (projectRegion && response.accountDraft.region !== projectRegion) {
+      response.notes = [
+        ...response.notes,
+        `Project region is ${projectRegion}, but S3 signing region uses ${response.accountDraft.region} for compatibility.`,
+      ]
+    }
   } catch (err) {
     const errorMessage = err?.message ?? String(err)
     const fallbackToLocal = isAccountDraftSufficient(response.accountDraft)

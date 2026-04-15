@@ -16,6 +16,7 @@ import {
   isSupabaseAccessToken,
   normalizeSupabaseAccessTokenExp,
 } from '../supabaseS3.js'
+import { resolveS3SigningRegion } from '../s3Signing.js'
 
 function hasOwn(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key)
@@ -205,7 +206,11 @@ function normalizeAccountEntries(payload) {
     const accessKeyId = normalizeString(entry.accessKeyId ?? entry.access_key_id)
     const secretKey = normalizeString(entry.secretAccessKey ?? entry.secret_key)
     const endpoint = normalizeString(entry.endpoint)
-    const region = normalizeString(entry.region)
+    const regionInput = normalizeString(entry.region)
+    const region = resolveS3SigningRegion({
+      endpoint,
+      region: regionInput,
+    })
     const bucket = normalizeString(entry.bucket)
     const addressingStyle = normalizeAddressingStyle(entry.addressingStyle ?? entry.addressing_style)
     const payloadSigningMode = normalizePayloadSigningMode(entry.payloadSigningMode ?? entry.payload_signing_mode)
@@ -245,7 +250,7 @@ function normalizeAccountEntries(payload) {
     if (!accessKeyId) errors.push(`${sourceLabel}.accessKeyId is required`)
     if (!secretKey) errors.push(`${sourceLabel}.secretAccessKey is required`)
     if (!endpoint) errors.push(`${sourceLabel}.endpoint is required`)
-    if (!region) errors.push(`${sourceLabel}.region is required`)
+    if (!regionInput) errors.push(`${sourceLabel}.region is required`)
     if (!bucket) errors.push(`${sourceLabel}.bucket is required`)
     if (!addressingStyle) errors.push(`${sourceLabel}.addressingStyle must be one of: path, virtual`)
     if (!payloadSigningMode) errors.push(`${sourceLabel}.payloadSigningMode must be one of: unsigned, signed`)
