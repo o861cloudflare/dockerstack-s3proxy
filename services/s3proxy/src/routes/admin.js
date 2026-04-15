@@ -184,6 +184,105 @@ function normalizeNonNegativeInteger(value, fallback, fieldName, errors) {
   return Math.trunc(numeric)
 }
 
+function summarizeS3Error(err) {
+  const metadata = err?.$metadata ?? {}
+  const statusCode = Number(metadata.httpStatusCode)
+
+  return {
+    name: normalizeString(err?.name) || null,
+    code: normalizeString(err?.Code ?? err?.code) || null,
+    message: normalizeString(err?.message) || null,
+    httpStatusCode: Number.isFinite(statusCode) ? statusCode : null,
+    requestId: normalizeString(metadata.requestId) || null,
+    extendedRequestId: normalizeString(metadata.extendedRequestId) || null,
+    cfId: normalizeString(metadata.cfId) || null,
+  }
+}
+
+function formatS3ErrorSummary(summary) {
+  if (!summary) return 'Unknown S3 error'
+
+  const parts = []
+  if (summary.name) parts.push(summary.name)
+  if (summary.code && summary.code !== summary.name) parts.push(`code=${summary.code}`)
+  if (summary.httpStatusCode) parts.push(`status=${summary.httpStatusCode}`)
+  if (summary.message) parts.push(summary.message)
+
+  return parts.length > 0 ? parts.join(' | ') : 'Unknown S3 error'
+}
+
+function isMissingBucketSummary(summary) {
+  if (!summary) return false
+  if (summary.httpStatusCode === 404) return true
+
+  const combined = `${summary.name ?? ''} ${summary.code ?? ''} ${summary.message ?? ''}`.toLowerCase()
+  return combined.includes('nosuchbucket')
+    || combined.includes('notfound')
+    || combined.includes('bucket not found')
+}
+
+function isLikelyExistingBucketSummary(summary) {
+  if (!summary) return false
+  if ([301, 307].includes(summary.httpStatusCode)) return true
+
+  const combined = `${summary.name ?? ''} ${summary.code ?? ''} ${summary.message ?? ''}`.toLowerCase()
+  return combined.includes('permanentredirect')
+    || combined.includes('authorization headermalformed')
+}
+
+function toSafeAccountLog(row) {
+  return {
+    accountId: row.account_id,
+    accessKeyIdSuffix: row.access_key_id ? row.access_key_id.slice(-6) : '',
+    hasSecretKey: Boolean(row.secret_key),
+    endpoint: row.endpoint,
+    region: row.region,
+    bucket: row.bucket,
+    addressingStyle: row.addressing_style ?? 'path',
+    payloadSigningMode: row.payload_signing_mode ?? 'unsigned',
+    emailOwner: row.email_owner ?? '',
+    hasSupabaseAccessToken: Boolean(row.supabase_access_token),
+    hasSupabaseAccessTokenExp: Boolean(row.supabase_access_token_exp),
+    quotaBytes: row.quota_bytes,
+    usedBytes: row.used_bytes,
+    active: row.active === 1 || row.active === true,
+  }
+}
+
+function toIncomingAccountLog(payload) {
+  const accessTokenExp = normalizeSupabaseAccessTokenExp(readAccountField(payload, null, [
+    'supabaseAccessTokenExp',
+    'supabaseAccessTokenExperimental',
+    'supabase_access_token_exp',
+    'supabase_access_token_experimental',
+    'supabase.accessTokenExp',
+    'supabase.accessTokenExperimental',
+    'supabase.access_token_exp',
+    'supabase.accessToken.exp',
+    'supabase.accessToken.experimental',
+    'supabase.access_token.experimental',
+    'supabase.access_token.exp',
+  ]))
+
+  return {
+    requestedAccountId: normalizeString(payload.accountId ?? payload.account_id),
+    endpoint: normalizeString(payload.endpoint),
+    region: normalizeString(payload.region),
+    bucket: normalizeString(payload.bucket),
+    hasAccessKeyId: Boolean(normalizeString(payload.accessKeyId ?? payload.access_key_id)),
+    hasSecretAccessKey: Boolean(normalizeString(payload.secretAccessKey ?? payload.secret_key)),
+    hasEmailOwner: Boolean(normalizeString(readAccountField(payload, '', ['emailOwner', 'email_owner', 'supabase.emailOwner']))),
+    hasSupabaseAccessToken: Boolean(normalizeString(readAccountField(payload, '', [
+      'supabaseAccessToken',
+      'supabase_access_token',
+      'supabase.accessToken',
+      'supabase.access_token',
+      'supabase.accessToken.value',
+    ]))),
+    hasSupabaseAccessTokenExp: Boolean(accessTokenExp),
+  }
+}
+
 function toRtdbAccountDocument(account) {
   return {
     accountId: account.account_id,
@@ -341,9 +440,66 @@ function normalizeAccountPayload(payload, existing = null) {
   }
 }
 
-async function assertBucketExists(accountRow) {
+async function verifyBucketExists(accountRow, logger = null) {
   const client = createS3Client(accountRow)
-  await client.send(new HeadBucketCommand({ Bucket: accountRow.bucket }))
+  const attempts = []
+  const checks = [
+    { operation: 'HeadBucket', command: new HeadBucketCommand({ Bucket: accountRow.bucket }) },
+    { operation: 'ListObjectsV2', command: new ListObjectsV2Command({ Bucket: accountRow.bucket, MaxKeys: 1 }) },
+  ]
+
+  for (const check of checks) {
+    try {
+      await client.send(check.command)
+      attempts.push({ operation: check.operation, ok: true })
+      return {
+        exists: true,
+        verifiedBy: check.operation,
+        attempts,
+        detail: `${check.operation} succeeded`,
+      }
+    } catch (err) {
+      const error = summarizeS3Error(err)
+      attempts.push({
+        operation: check.operation,
+        ok: false,
+        error,
+      })
+
+      logger?.warn({
+        accountId: accountRow.account_id,
+        bucket: accountRow.bucket,
+        operation: check.operation,
+        error,
+      }, 'admin account bucket verification step failed')
+
+      if (isMissingBucketSummary(error)) {
+        return {
+          exists: false,
+          verifiedBy: null,
+          attempts,
+          detail: formatS3ErrorSummary(error),
+        }
+      }
+
+      if (isLikelyExistingBucketSummary(error)) {
+        return {
+          exists: true,
+          verifiedBy: `${check.operation}:${error.name || error.code || error.httpStatusCode || 'redirect'}`,
+          attempts,
+          detail: formatS3ErrorSummary(error),
+        }
+      }
+    }
+  }
+
+  const lastError = attempts.at(-1)?.error ?? null
+  return {
+    exists: null,
+    verifiedBy: null,
+    attempts,
+    detail: formatS3ErrorSummary(lastError),
+  }
 }
 
 function readStreamBodyToString(body) {
@@ -491,6 +647,15 @@ export default async function adminRoutes(fastify, _opts) {
     const requestedServices = Array.isArray(payload.services)
       ? payload.services.map((item) => normalizeString(item)).filter(Boolean)
       : [normalizeString(payload.service)].filter(Boolean)
+    const bucketNameOverride = normalizeString(payload.bucketName ?? payload.preferredBucketName) || undefined
+
+    request.log.info({
+      requestedServices: requestedServices.length > 0 ? requestedServices : ['supabaseS3'],
+      rawInputLength: rawInput.length,
+      lookupRemote: payload.lookupRemote === true,
+      createBucketIfMissing: payload.createBucketIfMissing === true,
+      bucketNameOverride: bucketNameOverride ?? null,
+    }, 'admin account service preview requested')
 
     const useSupabaseS3 = requestedServices.length === 0 || requestedServices.includes('supabaseS3')
     if (!useSupabaseS3) {
@@ -503,8 +668,29 @@ export default async function adminRoutes(fastify, _opts) {
     const preview = await previewSupabaseS3(rawInput, {
       lookupRemote: payload.lookupRemote === true,
       createBucketIfMissing: payload.createBucketIfMissing === true,
-      bucketName: normalizeString(payload.bucketName ?? payload.preferredBucketName) || undefined,
+      bucketName: bucketNameOverride,
     })
+
+    request.log.info({
+      service: 'supabaseS3',
+      missingRequired: preview.missingRequired ?? [],
+      warningCount: Array.isArray(preview.warnings) ? preview.warnings.length : 0,
+      remote: {
+        attempted: preview.remote?.attempted === true,
+        ok: preview.remote?.ok === true,
+        fallbackToLocal: preview.remote?.fallbackToLocal === true,
+        bucketResolved: preview.remote?.bucketResolved ?? null,
+        bucketCreated: preview.remote?.bucketCreated === true,
+        error: preview.remote?.error ?? null,
+      },
+    }, 'admin account service preview completed')
+
+    if (Array.isArray(preview.warnings) && preview.warnings.length > 0) {
+      request.log.warn({
+        service: 'supabaseS3',
+        warnings: preview.warnings,
+      }, 'admin account service preview has warnings')
+    }
 
     return reply.send({
       ok: true,
@@ -517,11 +703,18 @@ export default async function adminRoutes(fastify, _opts) {
     config: { skipAuth: true },
   }, async (request, reply) => {
     const payload = parseBodyObject(request.body)
+    const incomingLog = toIncomingAccountLog(payload)
+    request.log.info({ incoming: incomingLog }, 'admin account upsert requested')
+
     const requestedId = normalizeString(payload.accountId ?? payload.account_id)
     const existing = requestedId ? getAccountById(requestedId) : null
     const normalized = normalizeAccountPayload(payload, existing)
 
     if (normalized.errors.length > 0 || !normalized.row) {
+      request.log.warn({
+        requestedId: requestedId || null,
+        errors: normalized.errors,
+      }, 'admin account upsert validation failed')
       return reply.code(400).send({
         ok: false,
         error: 'Invalid account payload',
@@ -529,15 +722,48 @@ export default async function adminRoutes(fastify, _opts) {
       })
     }
 
-    try {
-      await assertBucketExists(normalized.row)
-    } catch (err) {
-      const message = err?.message ?? String(err)
+    request.log.info({
+      account: toSafeAccountLog(normalized.row),
+      existing: Boolean(existing),
+    }, 'admin account payload normalized')
+
+    request.log.info({
+      accountId: normalized.row.account_id,
+      bucket: normalized.row.bucket,
+      endpoint: normalized.row.endpoint,
+    }, 'admin account bucket verification started')
+
+    const bucketVerification = await verifyBucketExists(normalized.row, request.log)
+
+    if (bucketVerification.exists === false) {
+      request.log.warn({
+        accountId: normalized.row.account_id,
+        bucket: normalized.row.bucket,
+        bucketVerification,
+      }, 'admin account upsert rejected because bucket was not found')
+
       return reply.code(400).send({
         ok: false,
-        error: `Bucket "${normalized.row.bucket}" does not exist or is not accessible`,
-        detail: message,
+        error: `Bucket "${normalized.row.bucket}" does not exist`,
+        detail: bucketVerification.detail,
+        bucketVerification,
       })
+    }
+
+    let bucketWarning = ''
+    if (bucketVerification.exists === null) {
+      bucketWarning = `Bucket "${normalized.row.bucket}" could not be verified automatically (${bucketVerification.detail}); account is still saved.`
+      request.log.warn({
+        accountId: normalized.row.account_id,
+        bucket: normalized.row.bucket,
+        bucketVerification,
+      }, 'admin account bucket verification inconclusive')
+    } else {
+      request.log.info({
+        accountId: normalized.row.account_id,
+        bucket: normalized.row.bucket,
+        verifiedBy: bucketVerification.verifiedBy,
+      }, 'admin account bucket verification passed')
     }
 
     const beforeUpsert = getAccountById(normalized.row.account_id)
@@ -549,22 +775,35 @@ export default async function adminRoutes(fastify, _opts) {
     }
 
     let rtdbSynced = true
-    let warning = ''
+    const warnings = []
+    if (bucketWarning) warnings.push(bucketWarning)
     try {
       await rtdbBatchPatch(updates)
       await reloadAccountsFromRTDB()
     } catch (err) {
       rtdbSynced = false
-      warning = `Account saved locally, but RTDB sync failed: ${err?.message ?? String(err)}`
+      warnings.push(`Account saved locally, but RTDB sync failed: ${err?.message ?? String(err)}`)
       request.log.warn({ err, accountId: normalized.row.account_id }, 'admin account sync failed')
       reloadAccountsFromSQLite()
     }
+
+    request.log.info({
+      accountId: normalized.row.account_id,
+      action: beforeUpsert ? 'updated' : 'created',
+      rtdbSynced,
+      warningCount: warnings.length,
+      bucketVerification: {
+        exists: bucketVerification.exists,
+        verifiedBy: bucketVerification.verifiedBy,
+      },
+    }, 'admin account upsert completed')
 
     return reply.send({
       ok: true,
       action: beforeUpsert ? 'updated' : 'created',
       rtdbSynced,
-      warning: warning || undefined,
+      warning: warnings.length > 0 ? warnings.join(' | ') : undefined,
+      bucketVerification,
       account: toPublicAccount(normalized.row),
     })
   })
@@ -573,6 +812,8 @@ export default async function adminRoutes(fastify, _opts) {
     config: { skipAuth: true },
   }, async (request, reply) => {
     const accountId = normalizeString(request.params?.accountId)
+    request.log.info({ accountId: accountId || null }, 'admin account delete requested')
+
     if (!accountId) {
       return reply.code(400).send({ ok: false, error: 'accountId is required' })
     }
@@ -617,6 +858,12 @@ export default async function adminRoutes(fastify, _opts) {
       request.log.warn({ err, accountId }, 'admin account delete sync failed')
       reloadAccountsFromSQLite()
     }
+
+    request.log.info({
+      accountId,
+      rtdbSynced,
+      warning: warning || null,
+    }, 'admin account delete completed')
 
     return reply.send({
       ok: true,
