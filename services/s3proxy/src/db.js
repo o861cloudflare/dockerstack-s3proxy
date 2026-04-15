@@ -347,6 +347,17 @@ const stmts = {
     WHERE state = 'ACTIVE'
       AND deleted_at IS NULL
   `),
+  listBucketsFromVisibleRoutes: db.prepare(`
+    SELECT
+      bucket,
+      MIN(uploaded_at) AS first_uploaded_at,
+      MAX(COALESCE(updated_at, uploaded_at)) AS last_updated_at
+    FROM routes
+    WHERE state = 'ACTIVE'
+      AND deleted_at IS NULL
+      AND COALESCE(bucket, '') != ''
+    GROUP BY bucket
+  `),
   listVisibleObjectsPage: db.prepare(`
     SELECT *
     FROM routes
@@ -542,6 +553,12 @@ export function upsertRoute(route) {
   const existing = stmts.getRoute.get(route.encoded_key)
   const normalized = normalizeRouteForWrite(route, existing)
   stmts.upsertRoute.run(normalized)
+
+  if (normalized.bucket
+      && normalized.state === ROUTE_STATE.ACTIVE
+      && (normalized.deleted_at === null || normalized.deleted_at === undefined)) {
+    ensureBucketActive(normalized.bucket, normalized.updated_at ?? Date.now())
+  }
 }
 
 export function getRoute(encodedKey) {
@@ -586,6 +603,41 @@ export function countRoutes(options = {}) {
 export function getPendingSyncRoutes(limit = 500) {
   return stmts.getPendingSyncRoutes.all({ limit: Math.max(1, Math.min(Number(limit) || 500, 5000)) })
 }
+
+export const ensureBucketsFromActiveRoutes = db.transaction((now = Date.now()) => {
+  const rows = stmts.listBucketsFromVisibleRoutes.all()
+  let created = 0
+  let revived = 0
+  let alreadyActive = 0
+
+  for (const row of rows) {
+    const bucket = row?.bucket
+    if (!bucket) continue
+
+    const existing = stmts.getBucket.get(bucket)
+    const bucketNow = Number(row?.last_updated_at) || now
+    const result = ensureBucketActive(bucket, bucketNow)
+
+    if (!existing) {
+      created++
+      continue
+    }
+
+    if (existing.deleted_at !== null && existing.deleted_at !== undefined) {
+      revived++
+      continue
+    }
+
+    if (result?.existed) alreadyActive++
+  }
+
+  return {
+    scanned: rows.length,
+    created,
+    revived,
+    alreadyActive,
+  }
+})
 
 export function markRouteSynced(encodedKey, updatedAt = Date.now()) {
   stmts.markRouteSynced.run({ encoded_key: encodedKey, updated_at: updatedAt })

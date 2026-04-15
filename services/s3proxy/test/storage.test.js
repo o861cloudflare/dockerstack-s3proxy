@@ -26,9 +26,11 @@ const GB = 1024 * MB
 const {
   db,
   commitUploadedObjectMetadata,
+  ensureBucketsFromActiveRoutes,
   finalizeRouteDelete,
   getAllActiveAccounts,
   getAllRoutes,
+  getBucket,
   getRoute,
   listVisibleObjectsPage,
   markRouteMissingBackend,
@@ -139,6 +141,77 @@ async function testCommitUploadMetadata() {
     ok('commitUploadedObjectMetadata luu route ACTIVE va cap nhat used_bytes giao dich')
   } catch (err) {
     fail('commitUploadedObjectMetadata', err)
+  }
+}
+
+async function testUpsertRouteAutoCreatesBucket() {
+  try {
+    const bucket = 'auto-bucket'
+    const objectKey = 'seed/from-rtdb.txt'
+    const now = Date.now()
+
+    upsertRoute({
+      encoded_key: Buffer.from(`${bucket}/${objectKey}`).toString('base64url'),
+      account_id: 'acc1',
+      bucket,
+      object_key: objectKey,
+      backend_key: buildBackendKey(bucket, objectKey),
+      size_bytes: 1,
+      uploaded_at: now,
+      updated_at: now,
+      state: ROUTE_STATE.ACTIVE,
+      deleted_at: null,
+      instance_id: 'test',
+    })
+
+    const bucketRecord = getBucket(bucket)
+    if (!bucketRecord || bucketRecord.deleted_at !== null) {
+      throw new Error(`bucketRecord=${JSON.stringify(bucketRecord)}`)
+    }
+
+    ok('upsertRoute ACTIVE tu dong tao record bucket de HEAD /:bucket khong bi 404')
+  } catch (err) {
+    fail('upsertRoute ACTIVE auto-create bucket', err)
+  }
+}
+
+async function testEnsureBucketsFromActiveRoutesRepairsMissingBuckets() {
+  try {
+    const bucket = 'repair-bucket'
+    const objectKey = 'repair/path.txt'
+    const encoded = Buffer.from(`${bucket}/${objectKey}`).toString('base64url')
+    const now = Date.now()
+
+    commitUploadedObjectMetadata({
+      encoded_key: encoded,
+      account_id: 'acc1',
+      bucket,
+      object_key: objectKey,
+      backend_key: buildBackendKey(bucket, objectKey),
+      size_bytes: 32,
+      uploaded_at: now,
+      updated_at: now,
+      instance_id: 'test',
+    })
+
+    db.prepare('DELETE FROM buckets WHERE bucket = ?').run(bucket)
+    if (getBucket(bucket)) {
+      throw new Error('bucket should be removed before repair')
+    }
+
+    const repaired = ensureBucketsFromActiveRoutes(Date.now())
+    const bucketRecord = getBucket(bucket)
+
+    if (!bucketRecord || bucketRecord.deleted_at !== null) {
+      throw new Error(`bucketRecord=${JSON.stringify(bucketRecord)} repaired=${JSON.stringify(repaired)}`)
+    }
+    if ((repaired.created + repaired.revived) < 1) {
+      throw new Error(`repair summary=${JSON.stringify(repaired)}`)
+    }
+
+    ok('ensureBucketsFromActiveRoutes tu phuc hoi bucket record bi drift')
+  } catch (err) {
+    fail('ensureBucketsFromActiveRoutes repair', err)
   }
 }
 
@@ -301,6 +374,8 @@ async function main() {
   await testUpsertAndOrder()
   await testSelectAccount()
   await testCommitUploadMetadata()
+  await testUpsertRouteAutoCreatesBucket()
+  await testEnsureBucketsFromActiveRoutesRepairsMissingBuckets()
   await testVisibleListAndTombstone()
   await testMissingBackendTransition()
   await testCacheSetGet()

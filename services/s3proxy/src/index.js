@@ -8,7 +8,13 @@ import pino from 'pino'
 import { randomBytes } from 'crypto'
 
 import config from './config.js'
-import { db, getAllRoutes, upsertRoute, deleteRoute } from './db.js'
+import {
+  db,
+  deleteRoute,
+  ensureBucketsFromActiveRoutes,
+  getAllRoutes,
+  upsertRoute,
+} from './db.js'
 import { cacheSet, cacheDelete } from './cache.js'
 import {
   reloadAccountsFromRTDB,
@@ -273,6 +279,13 @@ async function bootstrap() {
     log.info({ count: recentRoutes.length }, 'route cache warmed')
   } catch (err) {
     log.warn({ err: err.message }, 'route cache warm failed')
+  }
+
+  try {
+    const bucketRepair = ensureBucketsFromActiveRoutes(Date.now())
+    log.info({ bucketRepair }, 'bucket state repaired from active routes')
+  } catch (err) {
+    log.warn({ err: err.message }, 'bucket state repair failed')
   }
 
   await fastify.register(authPlugin)
