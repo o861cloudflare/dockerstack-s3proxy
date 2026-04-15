@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b1020" />
+  <link rel="manifest" href="/admin/manifest.webmanifest" />
+  <link rel="icon" href="/admin/icon.svg" type="image/svg+xml" />
   <title>S3Proxy Admin</title>
   <style>
     :root { color-scheme: dark; }
@@ -27,6 +30,51 @@
     textarea { min-height: 82px; }
     .span2 { grid-column: span 2; }
     .hint { font-size: 12px; color: #9ca3af; margin-top: 8px; }
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    #accountsBody td:nth-child(2) { min-width: 260px; }
+    #accountsBody td { word-break: break-word; }
+    @media (max-width: 960px) {
+      .wrap { padding: 14px; }
+      .card { padding: 12px; }
+      .actions button { flex: 1 1 calc(50% - 8px); }
+      form { grid-template-columns: 1fr; }
+      .span2 { grid-column: span 1; }
+    }
+    @media (max-width: 760px) {
+      table.responsive-table thead { display: none; }
+      table.responsive-table,
+      table.responsive-table tbody,
+      table.responsive-table tr,
+      table.responsive-table td {
+        display: block;
+        width: 100%;
+      }
+      table.responsive-table tr {
+        background: #0f172a;
+        border: 1px solid #2c3c65;
+        border-radius: 10px;
+        margin-bottom: 10px;
+        padding: 8px;
+      }
+      table.responsive-table td {
+        border-bottom: 0;
+        padding: 6px 8px;
+      }
+      table.responsive-table td::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 11px;
+        color: #9ca3af;
+        margin-bottom: 2px;
+      }
+      table.responsive-table td:last-child {
+        padding-top: 10px;
+      }
+      table.responsive-table td button {
+        margin-right: 6px;
+        margin-bottom: 6px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -35,7 +83,9 @@
   <div class="actions">
     <button id="refreshBtn">Refresh trạng thái</button>
     <button id="testAllBtn" class="secondary">Test file operations (all active)</button>
+    <button id="installBtn" class="secondary" hidden>Install app</button>
   </div>
+  <div id="installHint" class="hint"></div>
 
   <section class="card">
     <h2>Tổng quan</h2>
@@ -60,10 +110,12 @@
       <button type="submit">Lưu cron job</button>
     </form>
     <p class="hint">Kinds mặc định: keepalive_scan, keepalive_touch, probe_active_accounts.</p>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Job</th><th>Type</th><th>Schedule</th><th>Status</th><th>Payload</th><th>Action</th></tr></thead>
       <tbody id="jobsBody"></tbody>
     </table>
+    </div>
   </section>
 
   <section class="card">
@@ -83,8 +135,8 @@
         <option value="unsigned">unsigned</option>
         <option value="signed">signed</option>
       </select>
-      <input id="accountQuotaBytes" type="number" min="1" placeholder="quotaBytes" />
-      <input id="accountUsedBytes" type="number" min="0" placeholder="usedBytes" />
+      <input id="accountQuotaBytes" type="number" min="1" placeholder="quotaBytes" value="1073741824" />
+      <input id="accountUsedBytes" type="number" min="0" placeholder="usedBytes" value="0" />
       <select id="accountActive">
         <option value="true">active</option>
         <option value="false">inactive</option>
@@ -93,11 +145,13 @@
       <button type="submit">Lưu account</button>
       <button type="button" id="accountResetBtn" class="secondary">Clear form</button>
     </form>
-    <p class="hint">Edit: bấm nút edit trên bảng để nạp dữ liệu; secret để trống sẽ giữ secret cũ.</p>
-    <table>
+    <p class="hint">Edit: bấm nút edit trên bảng để nạp dữ liệu; secret để trống sẽ giữ secret cũ. Mặc định account mới: quota=1GB, used=0.</p>
+    <div class="table-wrap">
+    <table class="responsive-table">
       <thead><tr><th>Account</th><th>Endpoint/Bucket</th><th>Used/Quota</th><th>Percent</th><th>Status</th><th>Action</th></tr></thead>
       <tbody id="accountsBody"></tbody>
     </table>
+    </div>
   </section>
 
   <section class="card">
@@ -114,10 +168,13 @@ const accountsBody = document.getElementById('accountsBody')
 const logEl = document.getElementById('log')
 const refreshBtn = document.getElementById('refreshBtn')
 const testAllBtn = document.getElementById('testAllBtn')
+const installBtn = document.getElementById('installBtn')
+const installHint = document.getElementById('installHint')
 const cronForm = document.getElementById('cronForm')
 const accountForm = document.getElementById('accountForm')
 const accountResetBtn = document.getElementById('accountResetBtn')
 let latestOverview = null
+let deferredInstallPrompt = null
 
 function fmtBytes(bytes) {
   if (!bytes) return '0 B'
@@ -156,8 +213,8 @@ function resetAccountForm() {
   document.getElementById('accountBucket').value = ''
   document.getElementById('accountAddressingStyle').value = 'path'
   document.getElementById('accountPayloadSigningMode').value = 'unsigned'
-  document.getElementById('accountQuotaBytes').value = ''
-  document.getElementById('accountUsedBytes').value = ''
+  document.getElementById('accountQuotaBytes').value = '1073741824'
+  document.getElementById('accountUsedBytes').value = '0'
   document.getElementById('accountActive').value = 'true'
   document.getElementById('accountAddedAt').value = ''
 }
@@ -205,6 +262,34 @@ function buildAccountPayloadFromForm() {
     addedAt: addedAtRaw ? Number(addedAtRaw) : undefined,
     active,
   }
+}
+
+function isStandaloneMode() {
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true
+}
+
+function setupInstallApp() {
+  const isiOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent || '')
+  if (isStandaloneMode()) {
+    installHint.textContent = 'App đang chạy ở chế độ cài đặt.'
+    installBtn.hidden = true
+  } else if (isiOS) {
+    installHint.textContent = 'iOS: mở menu Share của Safari và chọn "Add to Home Screen".'
+  }
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault()
+    deferredInstallPrompt = event
+    installBtn.hidden = false
+    installHint.textContent = 'Bạn có thể bấm Install app để tạo shortcut.'
+  })
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null
+    installBtn.hidden = true
+    installHint.textContent = 'Đã cài đặt app thành công.'
+  })
 }
 
 async function refresh() {
@@ -284,12 +369,12 @@ async function refresh() {
 
   accountsBody.innerHTML = body.accounts.map((account) => `
     <tr>
-      <td>${account.accountId}<br/><span class="hint">${account.accessKeyId || '-'} | ${account.addressingStyle || 'path'} | ${account.payloadSigningMode || 'unsigned'}</span></td>
-      <td>${account.endpoint}<br/><span class="hint">${account.bucket}</span></td>
-      <td>${fmtBytes(account.usedBytes)} / ${fmtBytes(account.quotaBytes)}</td>
-      <td>${account.usedPercent}%</td>
-      <td class="${account.active ? 'ok' : 'bad'}">${account.active ? 'active' : 'inactive'}</td>
-      <td>
+      <td data-label="Account">${account.accountId}<br/><span class="hint">${account.accessKeyId || '-'} | ${account.addressingStyle || 'path'} | ${account.payloadSigningMode || 'unsigned'}</span></td>
+      <td data-label="Endpoint/Bucket">${account.endpoint}<br/><span class="hint">${account.bucket}</span></td>
+      <td data-label="Used/Quota">${fmtBytes(account.usedBytes)} / ${fmtBytes(account.quotaBytes)}</td>
+      <td data-label="Percent">${account.usedPercent}%</td>
+      <td data-label="Status" class="${account.active ? 'ok' : 'bad'}">${account.active ? 'active' : 'inactive'}</td>
+      <td data-label="Action">
         <button data-account-test="${account.accountId}">Test</button>
         <button class="secondary" data-account-edit="${account.accountId}">Edit</button>
         <button class="danger" data-account-delete="${account.accountId}">Delete</button>
@@ -389,6 +474,22 @@ accountResetBtn.addEventListener('click', () => {
   resetAccountForm()
 })
 
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) {
+    installHint.textContent = 'Trình duyệt chưa hỗ trợ prompt cài đặt tại thời điểm này.'
+    return
+  }
+
+  deferredInstallPrompt.prompt()
+  try {
+    await deferredInstallPrompt.userChoice
+  } catch {
+    // ignore
+  }
+  deferredInstallPrompt = null
+  installBtn.hidden = true
+})
+
 refreshBtn.addEventListener('click', refresh)
 testAllBtn.addEventListener('click', async () => {
   logEl.textContent = 'Đang chạy test all active accounts...'
@@ -403,6 +504,11 @@ testAllBtn.addEventListener('click', async () => {
     logEl.textContent = String(err)
   }
 })
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/admin/sw.js', { scope: '/admin/' }).catch(() => {})
+}
+setupInstallApp()
 
 refresh().catch((err) => { logEl.textContent = String(err) })
 </script>

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   ListObjectsV2Command,
   PutObjectCommand,
 } from '@aws-sdk/client-s3'
@@ -37,6 +38,45 @@ import { createS3Client } from '../inventoryScanner.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const adminHtml = readFileSync(join(__dirname, '..', 'admin-ui.html'), 'utf-8')
+const adminIcon = readFileSync(join(__dirname, '..', 'admin-icon.svg'), 'utf-8')
+const DEFAULT_ADMIN_QUOTA_BYTES = 1024 * 1024 * 1024
+
+const adminServiceWorker = `
+const CACHE_NAME = 's3proxy-admin-v1'
+const ADMIN_SHELL = ['/admin', '/admin/manifest.webmanifest', '/admin/icon.svg']
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ADMIN_SHELL)).then(() => self.skipWaiting()),
+  )
+})
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim()),
+  )
+})
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request
+  if (request.method !== 'GET') return
+
+  const url = new URL(request.url)
+  if (!url.pathname.startsWith('/admin') || url.pathname.startsWith('/admin/api/')) return
+
+  event.respondWith(
+    fetch(request)
+      .then((response) => {
+        const clone = response.clone()
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone)).catch(() => {})
+        return response
+      })
+      .catch(() => caches.match(request).then((cached) => cached || caches.match('/admin'))),
+  )
+})
+`.trim()
 
 function formatPercent(used, quota) {
   if (!quota) return 0
@@ -155,7 +195,7 @@ function normalizeAccountPayload(payload, existing = null) {
   )
   const quotaBytes = normalizePositiveInteger(
     payload.quotaBytes ?? payload.quota_bytes,
-    existing?.quota_bytes ?? 5_368_709_120,
+    existing?.quota_bytes ?? DEFAULT_ADMIN_QUOTA_BYTES,
     'quotaBytes',
     errors,
   )
@@ -214,6 +254,11 @@ function normalizeAccountPayload(payload, existing = null) {
       added_at: addedAt,
     },
   }
+}
+
+async function assertBucketExists(accountRow) {
+  const client = createS3Client(accountRow)
+  await client.send(new HeadBucketCommand({ Bucket: accountRow.bucket }))
 }
 
 function pocketbaseCompatibility() {
@@ -302,6 +347,39 @@ export default async function adminRoutes(fastify, _opts) {
     reply.type('text/html; charset=utf-8').send(adminHtml)
   })
 
+  fastify.get('/admin/icon.svg', {
+    config: { skipAuth: true },
+  }, async (_request, reply) => {
+    reply.type('image/svg+xml; charset=utf-8').send(adminIcon)
+  })
+
+  fastify.get('/admin/manifest.webmanifest', {
+    config: { skipAuth: true },
+  }, async (_request, reply) => {
+    reply.type('application/manifest+json').send({
+      name: 'S3Proxy Admin',
+      short_name: 'S3Proxy',
+      description: 'Admin console for S3Proxy accounts, probes and cron jobs',
+      start_url: '/admin',
+      scope: '/admin/',
+      display: 'standalone',
+      background_color: '#0b1020',
+      theme_color: '#0b1020',
+      icons: [{
+        src: '/admin/icon.svg',
+        sizes: 'any',
+        type: 'image/svg+xml',
+        purpose: 'any maskable',
+      }],
+    })
+  })
+
+  fastify.get('/admin/sw.js', {
+    config: { skipAuth: true },
+  }, async (_request, reply) => {
+    reply.type('application/javascript; charset=utf-8').send(adminServiceWorker)
+  })
+
   fastify.get('/admin/api/overview', {
     config: { skipAuth: true },
   }, async (_request, reply) => {
@@ -345,6 +423,17 @@ export default async function adminRoutes(fastify, _opts) {
         ok: false,
         error: 'Invalid account payload',
         errors: normalized.errors,
+      })
+    }
+
+    try {
+      await assertBucketExists(normalized.row)
+    } catch (err) {
+      const message = err?.message ?? String(err)
+      return reply.code(400).send({
+        ok: false,
+        error: `Bucket "${normalized.row.bucket}" does not exist or is not accessible`,
+        detail: message,
       })
     }
 
