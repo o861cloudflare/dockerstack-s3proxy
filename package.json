@@ -64,7 +64,7 @@
     "git-ostash": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git ostash'\"",
     "git-ofetch": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git ofetch'\"",
     "git-oinit": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git oinit'\"",
-    "git-oconfig": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git oconfig && exit'\"",
+    "git-oconfig": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'ctrlj&git oconfig'\"",
     "git-oconfigclean": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git oconfigclean'\"",
     "git-ocreateremote": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git ocreateremote'\"",
     "git-addfile": "powershell -NoProfile -Command \"Start-Process -FilePath cmd.exe -WorkingDirectory '%CD%' -ArgumentList '/k', 'git addfile'\"",

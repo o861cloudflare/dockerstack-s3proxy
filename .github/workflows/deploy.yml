@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
   # schedule:
   #   - cron: "*/58 * * * *"
+  #     timezone: 'Asia/Ho_Chi_Minh'
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -20,9 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
-    # if: >-
-    #   github.repository == 'jjpaulinzonemailclpccdedu/dockerstack-omniroute' ||
-    #   github.repository == 'onghau/dockerstack-omniroute'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.repository == 'o861cloudflare/dockerstack-s3proxy') 
+      ||
+      (github.repository == 'onghau/dockerstack-omniroute')
 
     steps:
       - name: Checkout
