@@ -84,3 +84,9 @@
 - `services/s3proxy/src/routes/admin.js`: thêm protected endpoint `POST /api/cron-jobs/:jobId/run` dùng `x-api-key`/Bearer cho cron bên ngoài; endpoint admin cũ vẫn giữ để UI dùng trực tiếp.
 - `services/s3proxy/src/admin-ui.html`: tab Cron jobs hiển thị rõ 3 built-in rows, phân biệt manual/API trigger-only, show endpoint trigger, khóa edit/delete với built-in jobs.
 - `services/s3proxy/test/cron-api.test.js`: test built-in cron rows và external protected API.
+
+## 2026-04-17
+- Thêm runner info vào `/admin/api/overview` bằng cách đọc toàn bộ env prefix `_DOTENVRTDB_RUNNER_`.
+- Bổ sung footer ở `services/s3proxy/src/admin-ui.html` để hiển thị 5 trường chính: host type, repo, org, run id, run attempt.
+- Thêm hành vi click/footer button để mở modal xem toàn bộ runner info hiện có.
+- Cập nhật `.env.example` với block mẫu cho runner info.

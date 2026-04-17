@@ -61,6 +61,29 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const adminHtml = readFileSync(join(__dirname, '..', 'admin-ui.html'), 'utf-8')
 const adminIcon = readFileSync(join(__dirname, '..', 'admin-icon.svg'), 'utf-8')
 const DEFAULT_ADMIN_QUOTA_BYTES = 1024 * 1024 * 1024
+const RUNNER_INFO_PREFIX = '_DOTENVRTDB_RUNNER_'
+const RUNNER_INFO_SUMMARY_KEYS = [
+  `${RUNNER_INFO_PREFIX}HOST_TYPE`,
+  `${RUNNER_INFO_PREFIX}REPO`,
+  `${RUNNER_INFO_PREFIX}ORG`,
+  `${RUNNER_INFO_PREFIX}RUN_ID`,
+  `${RUNNER_INFO_PREFIX}RUN_ATTEMPT`,
+]
+
+function collectRunnerInfoFromEnv() {
+  const entries = Object.entries(process.env || {})
+    .filter(([key, value]) => key.startsWith(RUNNER_INFO_PREFIX) && String(value ?? '').trim())
+    .sort(([left], [right]) => left.localeCompare(right))
+
+  return Object.fromEntries(entries.map(([key, value]) => [key, String(value).trim()]))
+}
+
+function collectRunnerInfoSummary(runnerInfo) {
+  return RUNNER_INFO_SUMMARY_KEYS.reduce((acc, key) => {
+    if (runnerInfo[key]) acc[key] = runnerInfo[key]
+    return acc
+  }, {})
+}
 
 const adminServiceWorker = `
 const CACHE_NAME = 's3proxy-admin-v1'
@@ -798,6 +821,7 @@ export default async function adminRoutes(fastify, _opts) {
     const stats = getAccountsStats()
     const accounts = getAllAccounts().map(toPublicAccount)
     const rtdb = getRtdbState()
+    const runnerInfo = collectRunnerInfoFromEnv()
 
     reply.send({
       status: rtdb.connected ? 'ok' : 'degraded',
@@ -808,6 +832,8 @@ export default async function adminRoutes(fastify, _opts) {
       jobs: listCronJobs(),
       cronKinds: getCronJobKinds(),
       accounts,
+      runnerInfo,
+      runnerInfoSummary: collectRunnerInfoSummary(runnerInfo),
     })
   })
 
