@@ -1405,16 +1405,53 @@ export default async function adminRoutes(fastify, _opts) {
     config: { skipAuth: true },
   }, async (request, reply) => {
     try {
-      const result = await runCronJobNow(request.params.jobId)
+      const payload = parseBodyObject(request.body)
+      const result = await runCronJobNow(request.params.jobId, {
+        overridePayload: payload.payload && typeof payload.payload === 'object' && !Array.isArray(payload.payload)
+          ? payload.payload
+          : undefined,
+      })
       return reply.send({
         ok: result.lastRunStatus === 'ok',
         jobId: result.job_id,
+        jobName: result.name,
+        kind: result.kind,
+        source: result.source,
+        manualOnly: result.manualOnly === true,
+        apiPath: result.apiPath,
         lastRunStatus: result.lastRunStatus,
         lastRunError: result.lastRunError,
         report: result.lastRunReport ?? null,
       })
     } catch (err) {
       return reply.code(404).send({ ok: false, error: err?.message ?? String(err) })
+    }
+  })
+
+  fastify.post('/api/cron-jobs/:jobId/run', async (request, reply) => {
+    try {
+      const payload = parseBodyObject(request.body)
+      const result = await runCronJobNow(request.params.jobId, {
+        overridePayload: payload.payload && typeof payload.payload === 'object' && !Array.isArray(payload.payload)
+          ? payload.payload
+          : undefined,
+      })
+      return reply.send({
+        ok: result.lastRunStatus === 'ok',
+        jobId: result.job_id,
+        jobName: result.name,
+        kind: result.kind,
+        source: result.source,
+        manualOnly: result.manualOnly === true,
+        apiPath: result.apiPath,
+        lastRunStatus: result.lastRunStatus,
+        lastRunError: result.lastRunError,
+        report: result.lastRunReport ?? null,
+      })
+    } catch (err) {
+      const message = err?.message ?? String(err)
+      const statusCode = /not found/i.test(message) ? 404 : 400
+      return reply.code(statusCode).send({ ok: false, error: message })
     }
   })
 

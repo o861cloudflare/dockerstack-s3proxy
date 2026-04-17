@@ -77,3 +77,9 @@ See `docs/DEPLOY.md` for the full migration guide.
 - Sửa image `webssh` để tránh bước `apt-get` trên Ubuntu vốn kéo package rất chậm.
 - Chuyển `webssh` sang base Alpine + `openssh-client-default`, nên thời gian build lại ngắn hơn đáng kể.
 - Pin version cho `dozzle` và `webssh-windows`, đồng thời thêm `pull_policy: missing` để hạn chế tự kéo lại image khi local đã có sẵn.
+
+## 2026-04-17 - cron jobs dựng sẵn + API gọi từ cron bên ngoài
+- Tab **Cron jobs** giờ luôn có sẵn 3 job: `probe_active_accounts`, `keepalive_touch`, `keepalive_scan`.
+- Bạn có thể bấm **run now** ngay, không cần lưu cron job trước.
+- Có thêm API protected: `POST /api/cron-jobs/:jobId/run` để bạn đặt cron ở máy / hệ thống khác rồi gọi vào.
+- Nếu server này tắt mở liên tục và bạn đặt `CRON_ENABLED=false`, các job dựng sẵn vẫn hiện trong UI và vẫn chạy được bằng tay hoặc qua API.

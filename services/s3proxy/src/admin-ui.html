@@ -147,7 +147,7 @@
       <div class="section-head">
         <div>
           <h2>Cron jobs</h2>
-          <div class="sub">Chạy tay trực tiếp từng job và xem báo cáo chi tiết theo account.</div>
+          <div class="sub">Ba job dựng sẵn luôn có sẵn để chạy tay hoặc gọi từ cron bên ngoài qua API bảo vệ bằng x-api-key.</div>
         </div>
         <div class="actions">
           <button id="cronRefreshBtn" class="secondary">Refresh cron jobs</button>
@@ -163,10 +163,10 @@
         <textarea id="jobPayload" class="span2" placeholder='JSON payload (vd: {"prefix":"_s3proxy_keepalive"})'>{}</textarea>
         <button type="submit" id="cronSubmitBtn">Lưu cron job</button>
       </form>
-      <div class="hint">Kinds mặc định: keepalive_scan, keepalive_touch, probe_active_accounts.</div>
+      <div class="hint">Built-in jobs luôn có sẵn: probe_active_accounts, keepalive_touch, keepalive_scan. Dùng endpoint protected <code>POST /api/cron-jobs/&lt;jobId&gt;/run</code> với header <code>x-api-key</code> để gọi từ cron bên ngoài.</div>
       <div class="table-wrap">
         <table class="responsive-table">
-          <thead><tr><th>Job</th><th>Type</th><th>Schedule</th><th>Status</th><th>Payload</th><th>Action</th></tr></thead>
+          <thead><tr><th>Job</th><th>Type</th><th>Schedule / Trigger</th><th>Status</th><th>Payload</th><th>Action</th></tr></thead>
           <tbody id="jobsBody"></tbody>
         </table>
       </div>
@@ -907,19 +907,29 @@ function renderJobs() {
 
   jobsBody.innerHTML = jobs.map((job) => {
     const statusClass = job.lastRunStatus === 'ok' ? 'ok' : (job.lastRunStatus === 'error' ? 'bad' : '')
-    const deleteButton = job.source === 'system'
+    const lockedJob = job.manualOnly || job.source === 'system' || job.source === 'builtin'
+    const scheduleLabel = job.manualOnly
+      ? 'manual / external API trigger only'
+      : `${escapeHtml(job.expression)}<br/><span class="hint">${escapeHtml(job.timezone)} | enabled=${job.enabled}</span>`
+    const editButton = lockedJob
+      ? '<button class="secondary" disabled>edit</button>'
+      : `<button class="secondary" data-edit="${escapeHtml(job.jobId)}">edit</button>`
+    const deleteButton = lockedJob
       ? '<button class="danger" disabled>delete</button>'
       : `<button class="danger" data-delete="${escapeHtml(job.jobId)}">delete</button>`
+    const apiPathLabel = job.apiPath
+      ? `<br/><span class="hint"><code>POST ${escapeHtml(job.apiPath)}</code></span>`
+      : ''
     return `
       <tr>
         <td data-label="Job">${escapeHtml(job.name)}<br/><span class="hint">${escapeHtml(job.jobId)} (${escapeHtml(job.source)})</span></td>
         <td data-label="Type">${escapeHtml(job.kind)}</td>
-        <td data-label="Schedule">${escapeHtml(job.expression)}<br/><span class="hint">${escapeHtml(job.timezone)} | enabled=${job.enabled}</span></td>
+        <td data-label="Schedule / Trigger">${scheduleLabel}${apiPathLabel}</td>
         <td data-label="Status" class="${statusClass}">${escapeHtml(job.lastRunStatus || '-')}<br/><span class="hint">${fmtTime(job.lastRunAt)} (${job.lastDurationMs || 0}ms)</span>${job.lastRunError ? `<br/><span class="hint bad">${escapeHtml(job.lastRunError)}</span>` : ''}</td>
         <td data-label="Payload"><pre>${escapeHtml(JSON.stringify(job.payload || {}, null, 2))}</pre></td>
         <td data-label="Action">
-          <button class="warn" data-run="${escapeHtml(job.jobId)}">run now</button>
-          <button class="secondary" data-edit="${escapeHtml(job.jobId)}">edit</button>
+          <button class="warn" data-run="${escapeHtml(job.jobId)}" data-name="${escapeHtml(job.name)}">run now</button>
+          ${editButton}
           ${deleteButton}
         </td>
       </tr>
@@ -929,11 +939,11 @@ function renderJobs() {
   jobsBody.querySelectorAll('button[data-run]').forEach((button) => {
     button.addEventListener('click', async () => {
       const release = setButtonBusy(button, true, 'Đang chạy')
-      cronRunLog.textContent = `Đang chạy cron job ${button.dataset.run}...`
+      cronRunLog.textContent = `Đang chạy cron job ${button.dataset.name || button.dataset.run}...`
       try {
         const result = await api(`/admin/api/cron-jobs/${encodeURIComponent(button.dataset.run)}/run`, { method: 'POST' })
         cronRunLog.textContent = JSON.stringify(result, null, 2)
-        showToast(`Đã chạy cron job ${button.dataset.run}.`, result.ok ? 'success' : 'error')
+        showToast(`Đã chạy cron job ${button.dataset.name || button.dataset.run}.`, result.ok ? 'success' : 'error')
         await loadCoreData(false)
       } catch (err) {
         cronRunLog.textContent = String(err)

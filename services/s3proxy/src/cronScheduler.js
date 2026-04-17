@@ -26,6 +26,61 @@ const JOB_KIND = Object.freeze({
   PROBE_ACTIVE_ACCOUNTS: 'probe_active_accounts',
 })
 
+const BUILTIN_JOB_SOURCE = 'builtin'
+const MANUAL_EXPRESSION = 'manual'
+
+function buildCronApiPath(jobId) {
+  return `/api/cron-jobs/${encodeURIComponent(jobId)}/run`
+}
+
+function defaultPayloadForKind(kind) {
+  if (kind === JOB_KIND.KEEPALIVE_TOUCH) {
+    return {
+      prefix: config.CRON_KEEPALIVE_PREFIX,
+      contentPrefix: config.CRON_KEEPALIVE_CONTENT_PREFIX,
+    }
+  }
+  if (kind === JOB_KIND.PROBE_ACTIVE_ACCOUNTS) {
+    return {
+      prefix: config.ADMIN_TEST_PREFIX,
+    }
+  }
+  return {
+    prefix: config.CRON_KEEPALIVE_PREFIX,
+    maxKeys: 1,
+  }
+}
+
+function getBuiltinCronRows() {
+  const now = Date.now()
+  return [
+    {
+      job_id: JOB_KIND.PROBE_ACTIVE_ACCOUNTS,
+      name: 'Probe active accounts',
+      kind: JOB_KIND.PROBE_ACTIVE_ACCOUNTS,
+    },
+    {
+      job_id: JOB_KIND.KEEPALIVE_TOUCH,
+      name: 'Keepalive touch',
+      kind: JOB_KIND.KEEPALIVE_TOUCH,
+    },
+    {
+      job_id: JOB_KIND.KEEPALIVE_SCAN,
+      name: 'Keepalive scan',
+      kind: JOB_KIND.KEEPALIVE_SCAN,
+    },
+  ].map((item) => ({
+    ...item,
+    expression: MANUAL_EXPRESSION,
+    timezone: config.CRON_TIMEZONE,
+    enabled: true,
+    source: BUILTIN_JOB_SOURCE,
+    payload_json: JSON.stringify(defaultPayloadForKind(item.kind)),
+    created_at: now,
+    updated_at: now,
+  }))
+}
+
 function parseCronField(field, min, max) {
   const normalized = String(field).trim()
   if (normalized === '*') return { any: true, values: null }
@@ -93,6 +148,8 @@ function getDateInTimezone(date, timezone = 'UTC') {
 }
 
 function shouldRun(descriptor, date = new Date()) {
+  if (descriptor.manualOnly) return false
+
   const rule = descriptor.parsedExpression
   if (!rule) return false
 
@@ -112,6 +169,12 @@ function parsePayload(payloadJson = '{}') {
   } catch {
     return {}
   }
+}
+
+function isManualTriggerOnly(row = {}) {
+  if (row.source === BUILTIN_JOB_SOURCE) return true
+  const expression = String(row.expression ?? '').trim().toLowerCase()
+  return expression === '' || expression === MANUAL_EXPRESSION
 }
 
 function sanitizeJobInput(payload = {}, existing = null) {
@@ -295,13 +358,16 @@ async function executeJobByKind(descriptor) {
 }
 
 function toRuntimeDescriptor(row) {
-  const parsedExpression = parseCronExpression(row.expression)
-  if (!parsedExpression) return null
+  const manualOnly = isManualTriggerOnly(row)
+  const parsedExpression = manualOnly ? null : parseCronExpression(row.expression)
+  if (!manualOnly && !parsedExpression) return null
 
   return {
     ...row,
     enabled: row.enabled === 1 || row.enabled === true,
     parsedExpression,
+    manualOnly,
+    apiPath: buildCronApiPath(row.job_id),
     lastRunAt: null,
     lastRunStatus: null,
     lastRunError: null,
@@ -329,11 +395,24 @@ function upsertRuntimeDescriptor(row) {
   return descriptor
 }
 
-async function runDescriptor(descriptor) {
+async function runDescriptor(descriptor, options = {}) {
   const startedAt = Date.now()
   descriptor.lastRunAt = startedAt
 
-  const report = await executeJobByKind(descriptor)
+  const overridePayload = options.overridePayload && typeof options.overridePayload === 'object' && !Array.isArray(options.overridePayload)
+    ? options.overridePayload
+    : null
+  const effectiveDescriptor = overridePayload
+    ? {
+      ...descriptor,
+      payload_json: JSON.stringify({
+        ...parsePayload(descriptor.payload_json),
+        ...overridePayload,
+      }),
+    }
+    : descriptor
+
+  const report = await executeJobByKind(effectiveDescriptor)
   descriptor.lastRunReport = report
   descriptor.lastRunStatus = report.ok ? 'ok' : 'error'
   descriptor.lastRunError = report.ok
@@ -373,6 +452,15 @@ function ensureDefaultJobs() {
 
 function rebuildRuntimeJobs() {
   jobs.clear()
+
+  for (const row of getBuiltinCronRows()) {
+    try {
+      upsertRuntimeDescriptor(row)
+    } catch (err) {
+      activeLogger.error?.({ err, jobId: row.job_id }, 'skip invalid builtin cron row')
+    }
+  }
+
   for (const row of getAllCronJobs()) {
     try {
       upsertRuntimeDescriptor(row)
@@ -405,7 +493,11 @@ function schedulerTick() {
 
 export function listCronJobs() {
   return [...jobs.values()]
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => {
+      const builtinDelta = Number(b.source === BUILTIN_JOB_SOURCE) - Number(a.source === BUILTIN_JOB_SOURCE)
+      if (builtinDelta !== 0) return builtinDelta
+      return a.name.localeCompare(b.name)
+    })
     .map((job) => ({
       jobId: job.job_id,
       name: job.name,
@@ -414,6 +506,8 @@ export function listCronJobs() {
       timezone: job.timezone,
       enabled: job.enabled,
       source: job.source,
+      manualOnly: job.manualOnly,
+      apiPath: job.apiPath,
       payload: parsePayload(job.payload_json),
       lastRunAt: job.lastRunAt,
       lastRunStatus: job.lastRunStatus,
@@ -457,12 +551,12 @@ export function removeCronJob(jobId) {
   return true
 }
 
-export async function runCronJobNow(jobId) {
+export async function runCronJobNow(jobId, options = {}) {
   const descriptor = jobs.get(jobId)
   if (!descriptor) {
     throw new Error(`Cron job not found: ${jobId}`)
   }
-  const report = await runDescriptor(descriptor)
+  const report = await runDescriptor(descriptor, options)
   return {
     ...descriptor,
     lastRunReport: report,
@@ -472,13 +566,15 @@ export async function runCronJobNow(jobId) {
 export async function startCronScheduler(logger = console) {
   activeLogger = logger
 
+  if (config.CRON_ENABLED) {
+    ensureDefaultJobs()
+  }
+  rebuildRuntimeJobs()
+
   if (!config.CRON_ENABLED) {
-    logger.info?.('cron scheduler disabled by CRON_ENABLED=false')
+    logger.info?.({ jobs: listCronJobs() }, 'cron scheduler disabled by CRON_ENABLED=false; builtin manual/api jobs are still available')
     return
   }
-
-  ensureDefaultJobs()
-  rebuildRuntimeJobs()
 
   if (config.CRON_RUN_ON_START) {
     for (const descriptor of jobs.values()) {

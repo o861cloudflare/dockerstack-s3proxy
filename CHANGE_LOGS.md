@@ -76,3 +76,11 @@
 - `services/webssh/Dockerfile`: đổi từ `tsl0922/ttyd:latest` + `apt-get install openssh-client` sang `tsl0922/ttyd:1.7.8-alpine` + `apk add --no-cache openssh-client-default` để giảm mạnh thời gian rebuild webssh.
 - `docker-compose/compose.ops.yml`: pin `dozzle` sang `v10.3.3`, `webssh-windows` sang `alpine/socat:1.8.0.3`, thêm `pull_policy: missing` cho image ngoài, và đặt tên image local `dockerstack-webssh:local` cho service webssh để cache ổn định hơn.
 - `docs/services/webssh.md`: bổ sung ghi chú vì sao chuyển sang Alpine và cách giảm thời gian build/pull.
+
+## 2026-04-17 - built-in cron rows + external trigger API
+- `services/s3proxy/src/cronScheduler.js`: thêm 3 built-in manual jobs (`probe_active_accounts`, `keepalive_touch`, `keepalive_scan`) luôn nạp sẵn vào runtime; không cần save cron mới để bấm `run now`.
+- `services/s3proxy/src/cronScheduler.js`: khi `CRON_ENABLED=false` vẫn rebuild danh sách job để Admin UI và external API dùng được, chỉ tắt scheduler local interval.
+- `services/s3proxy/src/cronScheduler.js`: thêm metadata `manualOnly`, `apiPath` và hỗ trợ override payload lúc trigger job.
+- `services/s3proxy/src/routes/admin.js`: thêm protected endpoint `POST /api/cron-jobs/:jobId/run` dùng `x-api-key`/Bearer cho cron bên ngoài; endpoint admin cũ vẫn giữ để UI dùng trực tiếp.
+- `services/s3proxy/src/admin-ui.html`: tab Cron jobs hiển thị rõ 3 built-in rows, phân biệt manual/API trigger-only, show endpoint trigger, khóa edit/delete với built-in jobs.
+- `services/s3proxy/test/cron-api.test.js`: test built-in cron rows và external protected API.
