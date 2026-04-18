@@ -165,10 +165,11 @@ function deriveDockerAccessFromEnv() {
   const websshPort = readResolvedEnv("WEBSSH_HOST_PORT") || "17681";
   const cloudflaredHostnames = collectResolvedEnvPrefix(CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX);
   const customEnv = collectResolvedEnvPrefix(DOCKER_ACCESS_URL_PREFIX);
-  const tailscaleHost = projectName && tailnetDomain ? `${projectName}.${tailnetDomain}` : tailnetDomain;
+  const tailscaleHost = tailnetDomain ? `${tailnetDomain}` : "";
 
   const cloudflaredItems = [
     { key: "root", label: "Root", envKey: `${CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX}1` },
+    { key: "rootAdmin", label: "RootAdmin", envKey: `${CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX}1/admin` },
     { key: "main", label: "Main", envKey: `${CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX}2` },
     { key: "ttyd", label: "TTYD", envKey: `${CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX}3` },
     { key: "dozzle", label: "Dozzle", envKey: `${CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX}4` },
@@ -177,9 +178,7 @@ function deriveDockerAccessFromEnv() {
     buildDockerAccessItem({
       ...item,
       url: ensureAccessUrl(cloudflaredHostnames[item.envKey]),
-      hint: cloudflaredHostnames[item.envKey]
-        ? `Lấy từ ${item.envKey}.`
-        : `Chưa cấu hình ${item.envKey}.`,
+      hint: cloudflaredHostnames[item.envKey] ? `Lấy từ ${item.envKey}.` : `Chưa cấu hình ${item.envKey}.`,
     }),
   );
 
@@ -189,36 +188,28 @@ function deriveDockerAccessFromEnv() {
       label: "Root",
       envKey: "TAILSCALE_TAILNET_DOMAIN",
       url: tailscaleHost ? `https://${tailscaleHost}` : "",
-      hint: tailscaleHost
-        ? "Root app qua Tailscale Serve."
-        : "Chưa đủ PROJECT_NAME / TAILSCALE_TAILNET_DOMAIN để dựng root URL.",
+      hint: tailscaleHost ? "Root app qua Tailscale Serve." : "Chưa đủ PROJECT_NAME / TAILSCALE_TAILNET_DOMAIN để dựng root URL.",
     }),
     buildDockerAccessItem({
       key: "ttyd",
       label: "TTYD",
       envKey: "WEBSSH_HOST_PORT",
       url: tailscaleHost ? `http://${tailscaleHost}:${websshPort}` : "",
-      hint: tailscaleHost
-        ? `Đi qua port ${websshPort}.`
-        : "Thiếu tailnet host để dựng URL ttyd.",
+      hint: tailscaleHost ? `Đi qua port ${websshPort}.` : "Thiếu tailnet host để dựng URL ttyd.",
     }),
     buildDockerAccessItem({
       key: "dozzle",
       label: "Dozzle",
       envKey: "DOZZLE_HOST_PORT",
       url: tailscaleHost ? `http://${tailscaleHost}:${dozzlePort}` : "",
-      hint: tailscaleHost
-        ? `Đi qua port ${dozzlePort}.`
-        : "Thiếu tailnet host để dựng URL dozzle.",
+      hint: tailscaleHost ? `Đi qua port ${dozzlePort}.` : "Thiếu tailnet host để dựng URL dozzle.",
     }),
     buildDockerAccessItem({
       key: "files",
       label: "Files",
       envKey: "FILEBROWSER_HOST_PORT",
       url: tailscaleHost ? `http://${tailscaleHost}:${filebrowserPort}` : "",
-      hint: tailscaleHost
-        ? `Đi qua port ${filebrowserPort}.`
-        : "Thiếu tailnet host để dựng URL files.",
+      hint: tailscaleHost ? `Đi qua port ${filebrowserPort}.` : "Thiếu tailnet host để dựng URL files.",
     }),
   ];
 
