@@ -69,8 +69,8 @@ services:
     volumes:
       - ${DOCKER_VOLUMES_ROOT:-./.docker-volumes}/s3proxy-data:/app/.docker-volumes/s3proxy-data
     labels:
-      # Public HTTP sites behind Cloudflare Tunnel. 
-      - "caddy=http://${PROJECT_NAME}.${DOMAIN}, http://main.${DOMAIN}, http://${DOMAIN}, http://${PROJECT_NAME}.${TAILSCALE_TAILNET_DOMAIN}, http://${PROJECT_NAME_TAILSCALE}.${TAILSCALE_TAILNET_DOMAIN}"
+      # Public HTTP sites behind Cloudflare Tunnel.
+      - "caddy=http://${PROJECT_NAME}.${DOMAIN}, http://main.${DOMAIN}, http://${DOMAIN}, http://${PROJECT_NAME_TAILSCALE}.${TAILSCALE_TAILNET_DOMAIN}"
       - "caddy.reverse_proxy={{upstreams ${APP_PORT:-3000}}}"
       # Chỉ bảo vệ /admin* bằng basic_auth
       - "caddy.@admin=path /admin*"
@@ -79,7 +79,7 @@ services:
       # - "caddy.basic_auth=/*"
       # - "caddy.basic_auth.${CADDY_AUTH_USER:-admin}=${CADDY_AUTH_HASH}"
       # Internal HTTPS site for Tailscale / trusted LAN access.
-      - "caddy_1=https://${PROJECT_NAME:-myapp}.${TAILSCALE_TAILNET_DOMAIN:-tailnet.local}, http://${PROJECT_NAME_TAILSCALE}.${TAILSCALE_TAILNET_DOMAIN}"
+      - "caddy_1=https://${PROJECT_NAME_TAILSCALE:-myapp}.${TAILSCALE_TAILNET_DOMAIN:-tailnet.local}"
       - "caddy_1.tls=internal"
       - "caddy_1.reverse_proxy={{upstreams ${APP_PORT:-3000}}}"
       - "caddy_1.basic_auth=/*"
