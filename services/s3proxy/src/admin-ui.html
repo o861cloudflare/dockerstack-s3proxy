@@ -64,6 +64,19 @@
     .toast.error { border-color: #991b1b; }
     .toast.info { border-color: #1d4ed8; }
     .chip { display: inline-flex; gap: 6px; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 11px; background: #1b2a4c; border: 1px solid #2c3c65; }
+    .access-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .access-card { background: #0f172a; border: 1px solid #2c3c65; border-radius: 14px; padding: 14px; display: grid; gap: 10px; }
+    .access-card h3 { margin: 0; }
+    .access-row { display: grid; gap: 6px; padding: 10px; border-radius: 12px; background: #111a31; border: 1px solid #223156; }
+    .access-row a { color: #93c5fd; text-decoration: none; word-break: break-all; }
+    .access-row a:hover { text-decoration: underline; }
+    .access-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+    .runner-footer { margin-top: 18px; padding: 12px 14px; border-radius: 14px; border: 1px solid #223156; background: #111a31; display: grid; gap: 10px; }
+    .runner-footer-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .runner-footer-summary { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    .runner-summary-item { padding: 10px 12px; border-radius: 12px; background: #17233f; border: 1px solid #273a62; font-size: 12px; }
+    .runner-footer button.linkish { padding: 0; background: transparent; border: 0; color: #93c5fd; text-align: left; }
+    .runner-footer button.linkish:hover { text-decoration: underline; }
     .modal-backdrop {
       position: fixed; inset: 0; background: rgba(2, 6, 23, 0.76); display: none;
       align-items: center; justify-content: center; z-index: 1100; padding: 16px;
@@ -77,13 +90,6 @@
     .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: #e2e8f0; }
     .modal-message { white-space: pre-wrap; line-height: 1.5; color: #cbd5e1; margin-bottom: 12px; max-height: 280px; overflow: auto; }
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
-    .runner-footer { margin-top: 6px; cursor: pointer; }
-    .runner-footer:hover { border-color: #3b82f6; }
-    .runner-footer:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
-    .runner-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-    .runner-item { background: #0f172a; border: 1px solid #2c3c65; border-radius: 12px; padding: 12px; min-height: 72px; }
-    .runner-item .label { display: block; font-size: 11px; color: #9ca3af; margin-bottom: 6px; }
-    .runner-item .value { display: block; font-size: 13px; color: #e5e7eb; word-break: break-word; }
 
     @media (max-width: 980px) {
       .wrap { padding: 14px; }
@@ -125,6 +131,7 @@
     </div>
     <div class="tabs" id="tabs">
       <button class="tab-btn active" data-tab="overview">Tổng quan</button>
+      <button class="tab-btn" data-tab="access">App access</button>
       <button class="tab-btn" data-tab="cron">Cron jobs</button>
       <button class="tab-btn" data-tab="accounts">Accounts</button>
       <button class="tab-btn" data-tab="public">Public Bucket Proxy</button>
@@ -146,6 +153,23 @@
         </div>
       </div>
       <div class="meta" id="meta"></div>
+    </div>
+  </section>
+
+  <section class="tab-panel" id="tab-access">
+    <div class="card stack">
+      <div class="section-head">
+        <div>
+          <h2>App access</h2>
+          <div class="sub">Mở nhanh các app ops qua domain, Tailscale domain hoặc URL custom từ env prefix <code>_DOCKER_ACCESS_URL_*</code>.</div>
+        </div>
+        <div class="actions">
+          <button id="accessRefreshBtn" class="secondary">Refresh app access</button>
+          <button id="accessEnvBtn" class="ghost">Xem env custom URL</button>
+        </div>
+      </div>
+      <div id="accessContext" class="hint"></div>
+      <div id="accessGrid" class="access-grid"></div>
     </div>
   </section>
 
@@ -398,19 +422,19 @@
       <pre id="log">(chưa chạy)</pre>
     </div>
   </section>
-
-  <footer id="runnerFooter" class="card stack runner-footer" role="button" tabindex="0" aria-label="Xem toàn bộ runner info">
-    <div class="section-head">
+  <div class="runner-footer" id="runnerFooter">
+    <div class="runner-footer-head">
       <div>
-        <h2>Runner info</h2>
-        <div class="sub">Lấy từ env với prefix <code>_DOTENVRTDB_RUNNER_</code>. Click để xem toàn bộ thông tin.</div>
+        <h3>Runner info</h3>
+        <div class="hint">Footer đọc từ env prefix <code>_DOTENVRTDB_RUNNER_*</code>. Bấm để xem toàn bộ.</div>
       </div>
       <div class="actions">
         <button id="runnerInfoBtn" type="button" class="ghost">Xem toàn bộ runner info</button>
       </div>
     </div>
-    <div id="runnerSummary" class="runner-summary"></div>
-  </footer>
+    <button id="runnerFooterToggle" type="button" class="linkish">Chưa có runner info từ env.</button>
+    <div class="runner-footer-summary" id="runnerSummary"></div>
+  </div>
 </div>
 
 <div id="modalBackdrop" class="modal-backdrop" aria-hidden="true">
@@ -426,6 +450,14 @@
 
 <script>
 const metaEl = document.getElementById('meta')
+const accessGrid = document.getElementById('accessGrid')
+const accessContext = document.getElementById('accessContext')
+const accessRefreshBtn = document.getElementById('accessRefreshBtn')
+const accessEnvBtn = document.getElementById('accessEnvBtn')
+const runnerFooter = document.getElementById('runnerFooter')
+const runnerSummary = document.getElementById('runnerSummary')
+const runnerInfoBtn = document.getElementById('runnerInfoBtn')
+const runnerFooterToggle = document.getElementById('runnerFooterToggle')
 const jobsBody = document.getElementById('jobsBody')
 const accountsBody = document.getElementById('accountsBody')
 const publicFilesBody = document.getElementById('publicFilesBody')
@@ -471,15 +503,12 @@ const modalTitle = document.getElementById('modalTitle')
 const modalMessage = document.getElementById('modalMessage')
 const modalCancelBtn = document.getElementById('modalCancelBtn')
 const modalConfirmBtn = document.getElementById('modalConfirmBtn')
-const runnerFooter = document.getElementById('runnerFooter')
-const runnerSummaryEl = document.getElementById('runnerSummary')
-const runnerInfoBtn = document.getElementById('runnerInfoBtn')
 let deferredInstallPrompt = null
 let modalResolver = null
 
 const state = {
   activeTab: 'overview',
-  core: { jobs: [], accounts: [], cronKinds: [], stats: null, status: '-', instanceId: '-', deployVersion: '-', rtdb: {}, runnerInfo: {}, runnerInfoSummary: {} },
+  core: { jobs: [], accounts: [], cronKinds: [], stats: null, status: '-', instanceId: '-', deployVersion: '-', rtdb: {}, runnerInfo: {}, dockerAccess: { urls: [], customEnv: {}, context: {} } },
   accountSort: { key: 'addedAt', direction: 'desc' },
   publicSort: { key: 'updatedAt', direction: 'desc' },
   allFilesSort: { key: 'updatedAt', direction: 'desc' },
@@ -522,55 +551,6 @@ function fmtTokenPreview(tokenValue) {
   if (!token) return '-'
   if (token.length <= 18) return token
   return `${token.slice(0, 12)}...${token.slice(-6)}`
-}
-
-const RUNNER_SUMMARY_KEYS = [
-  '_DOTENVRTDB_RUNNER_HOST_TYPE',
-  '_DOTENVRTDB_RUNNER_REPO',
-  '_DOTENVRTDB_RUNNER_ORG',
-  '_DOTENVRTDB_RUNNER_RUN_ID',
-  '_DOTENVRTDB_RUNNER_RUN_ATTEMPT',
-]
-
-const RUNNER_LABELS = {
-  _DOTENVRTDB_RUNNER_HOST_TYPE: 'Host type',
-  _DOTENVRTDB_RUNNER_REPO: 'Repo',
-  _DOTENVRTDB_RUNNER_ORG: 'Org',
-  _DOTENVRTDB_RUNNER_RUN_ID: 'Run ID',
-  _DOTENVRTDB_RUNNER_RUN_ATTEMPT: 'Run attempt',
-}
-
-function formatRunnerInfoMessage(runnerInfo) {
-  const entries = Object.entries(runnerInfo || {}).sort(([left], [right]) => left.localeCompare(right))
-  if (entries.length === 0) return 'Chưa có biến env nào với prefix _DOTENVRTDB_RUNNER_ trên tiến trình hiện tại.'
-  return entries.map(([key, value]) => `${key}: ${value}`).join('\n')
-}
-
-function renderRunnerSummary() {
-  const summary = state.core.runnerInfoSummary && Object.keys(state.core.runnerInfoSummary).length
-    ? state.core.runnerInfoSummary
-    : state.core.runnerInfo || {}
-
-  const html = RUNNER_SUMMARY_KEYS.map((key) => {
-    const value = String(summary[key] || '').trim() || '-'
-    return `
-      <div class="runner-item">
-        <span class="label">${escapeHtml(RUNNER_LABELS[key] || key)}</span>
-        <span class="value">${escapeHtml(value)}</span>
-      </div>
-    `
-  }).join('')
-
-  runnerSummaryEl.innerHTML = html
-}
-
-async function openRunnerInfoModal() {
-  await openModal({
-    title: 'Toàn bộ runner info',
-    message: formatRunnerInfoMessage(state.core.runnerInfo || {}),
-    confirmText: 'Đã hiểu',
-    showCancel: false,
-  })
 }
 
 function encodePathForUrl(path) {
@@ -1006,6 +986,151 @@ function sortAllFiles(files) {
 }
 
 
+
+function formatLabelFromEnvKey(key, prefix = '') {
+  const raw = String(key || '').replace(prefix, '')
+  return raw
+    .split(/[_\-.]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ') || key
+}
+
+function renderRunnerFooter() {
+  const runnerInfo = state.core.runnerInfo || {}
+  const summaryKeys = [
+    '_DOTENVRTDB_RUNNER_HOST_TYPE',
+    '_DOTENVRTDB_RUNNER_REPO',
+    '_DOTENVRTDB_RUNNER_ORG',
+    '_DOTENVRTDB_RUNNER_RUN_ID',
+    '_DOTENVRTDB_RUNNER_RUN_ATTEMPT',
+  ]
+  const presentSummary = summaryKeys.filter((key) => runnerInfo[key])
+
+  if (presentSummary.length === 0) {
+    runnerFooterToggle.textContent = 'Chưa có runner info từ env. Có thể bổ sung các biến _DOTENVRTDB_RUNNER_* trong compose/env_file.'
+    runnerSummary.innerHTML = ''
+    return
+  }
+
+  runnerFooterToggle.textContent = `Runner đang hiển thị ${Object.keys(runnerInfo).length} key từ env. Bấm để xem toàn bộ.`
+  runnerSummary.innerHTML = presentSummary.map((key) => `
+    <div class="runner-summary-item">${escapeHtml(formatLabelFromEnvKey(key, '_DOTENVRTDB_RUNNER_'))}: <b>${escapeHtml(runnerInfo[key])}</b></div>
+  `).join('')
+}
+
+async function openRunnerInfoModal() {
+  const runnerInfo = state.core.runnerInfo || {}
+  const keys = Object.keys(runnerInfo).sort()
+  if (keys.length === 0) {
+    await openModal({
+      title: 'Runner info',
+      message: 'Chưa có dữ liệu _DOTENVRTDB_RUNNER_* trong env hiện tại.',
+      confirmText: 'Đã hiểu',
+      showCancel: false,
+    })
+    return
+  }
+
+  const message = keys.map((key) => `${key}=${runnerInfo[key]}`).join('\n')
+  await openModal({
+    title: 'Toàn bộ runner info',
+    message,
+    confirmText: 'Đóng',
+    showCancel: false,
+  })
+}
+
+function renderAccessUrls() {
+  const dockerAccess = state.core.dockerAccess || {}
+  const urls = Array.isArray(dockerAccess.urls) ? dockerAccess.urls : []
+  const customEnv = dockerAccess.customEnv || {}
+  const context = dockerAccess.context || {}
+  const contextParts = []
+  if (context.projectName) contextParts.push(`project=${context.projectName}`)
+  if (context.domain) contextParts.push(`domain=${context.domain}`)
+  if (context.tailscaleTailnetDomain) contextParts.push(`tailscale=${context.tailscaleTailnetDomain}`)
+  accessContext.textContent = contextParts.length > 0
+    ? `Nguồn suy luận URL: ${contextParts.join(' | ')}. Custom env: ${Object.keys(customEnv).length} key.`
+    : `Chưa có context DOMAIN / PROJECT_NAME / TAILSCALE_TAILNET_DOMAIN. Có thể fallback bằng _DOCKER_ACCESS_URL_*.`
+
+  if (urls.length === 0) {
+    accessGrid.innerHTML = `<div class="empty-state">Chưa suy ra được URL nào. Hãy set PROJECT_NAME / DOMAIN / TAILSCALE_TAILNET_DOMAIN hoặc thêm các biến <code>_DOCKER_ACCESS_URL_*</code>.</div>`
+    return
+  }
+
+  const groups = new Map()
+  urls.forEach((item) => {
+    const groupKey = item.app || 'Other'
+    if (!groups.has(groupKey)) groups.set(groupKey, [])
+    groups.get(groupKey).push(item)
+  })
+
+  accessGrid.innerHTML = Array.from(groups.entries()).map(([group, items]) => `
+    <div class="access-card">
+      <div>
+        <h3>${escapeHtml(group)}</h3>
+        <div class="hint">${items.length} URL khả dụng để mở tab mới.</div>
+      </div>
+      ${items.map((item) => `
+        <div class="access-row">
+          <div><b>${escapeHtml(item.label || item.app || 'Link')}</b></div>
+          <div class="access-meta">
+            <span class="chip">via=${escapeHtml(item.via || '-')}</span>
+            <span class="chip">source=${escapeHtml(item.source || '-')}</span>
+            ${item.envKey ? `<span class="chip">${escapeHtml(item.envKey)}</span>` : ''}
+          </div>
+          <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(item.url)}</a>
+          ${item.hint ? `<div class="hint">${escapeHtml(item.hint)}</div>` : ''}
+          <div class="actions">
+            <button type="button" data-open-url="${escapeHtml(item.url)}">Mở tab mới</button>
+            <button type="button" class="secondary" data-copy-url="${escapeHtml(item.url)}">Copy URL</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('')
+
+  accessGrid.querySelectorAll('button[data-open-url]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const url = button.dataset.openUrl
+      if (!url) return
+      window.open(url, '_blank', 'noopener,noreferrer')
+      logMessage(`Đã mở tab mới: ${url}`)
+      showToast('Đã mở tab mới.', 'success')
+    })
+  })
+
+  accessGrid.querySelectorAll('button[data-copy-url]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const url = button.dataset.copyUrl
+      try {
+        await copyText(url)
+        logMessage(`Đã copy URL: ${url}`)
+        showToast('Đã copy URL.', 'success')
+      } catch (err) {
+        logMessage(String(err))
+        showToast(String(err), 'error')
+      }
+    })
+  })
+}
+
+async function openCustomAccessEnvModal() {
+  const customEnv = state.core.dockerAccess?.customEnv || {}
+  const keys = Object.keys(customEnv).sort()
+  const message = keys.length > 0
+    ? keys.map((key) => `${key}=${customEnv[key]}`).join('\n')
+    : 'Chưa có biến _DOCKER_ACCESS_URL_* nào trong env hiện tại.'
+
+  await openModal({
+    title: 'Custom access URLs từ env',
+    message,
+    confirmText: 'Đóng',
+    showCancel: false,
+  })
+}
+
 function renderOverview() {
   const core = state.core
   const healthClass = core.status === 'ok' ? 'ok' : 'bad'
@@ -1019,7 +1144,8 @@ function renderOverview() {
     <div class="pill">Used total: <b>${fmtBytes(core.stats?.usedBytes ?? 0)} / ${fmtBytes(core.stats?.totalBytes ?? 0)}</b></div>
     <div class="pill">RTDB connected: <b>${core.rtdb?.connected}</b> | listener: <b>${core.rtdb?.listenerActive}</b></div>
   `
-  renderRunnerSummary()
+  renderAccessUrls()
+  renderRunnerFooter()
 }
 
 function renderJobs() {
@@ -1524,6 +1650,40 @@ function setupInstallApp() {
   })
 }
 
+runnerInfoBtn.addEventListener('click', () => {
+  openRunnerInfoModal().catch((err) => {
+    logMessage(String(err))
+    showToast(String(err), 'error')
+  })
+})
+
+runnerFooterToggle.addEventListener('click', () => {
+  openRunnerInfoModal().catch((err) => {
+    logMessage(String(err))
+    showToast(String(err), 'error')
+  })
+})
+
+accessEnvBtn.addEventListener('click', () => {
+  openCustomAccessEnvModal().catch((err) => {
+    logMessage(String(err))
+    showToast(String(err), 'error')
+  })
+})
+
+accessRefreshBtn.addEventListener('click', async () => {
+  const release = setButtonBusy(accessRefreshBtn, true, 'Đang refresh')
+  try {
+    await loadCoreData(true)
+    setActiveTab('access')
+  } catch (err) {
+    logMessage(String(err))
+    showToast(String(err), 'error')
+  } finally {
+    release()
+  }
+})
+
 accountServiceParseBtn.addEventListener('click', async () => {
   const release = setButtonBusy(accountServiceParseBtn, true, 'Đang parse')
   try {
@@ -1905,22 +2065,6 @@ testAllBtn.addEventListener('click', async () => {
     showToast(String(err), 'error')
   } finally {
     release()
-  }
-})
-
-runnerInfoBtn.addEventListener('click', async (event) => {
-  event.stopPropagation()
-  await openRunnerInfoModal()
-})
-
-runnerFooter.addEventListener('click', async () => {
-  await openRunnerInfoModal()
-})
-
-runnerFooter.addEventListener('keydown', async (event) => {
-  if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault()
-    await openRunnerInfoModal()
   }
 })
 

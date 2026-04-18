@@ -61,28 +61,107 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const adminHtml = readFileSync(join(__dirname, '..', 'admin-ui.html'), 'utf-8')
 const adminIcon = readFileSync(join(__dirname, '..', 'admin-icon.svg'), 'utf-8')
 const DEFAULT_ADMIN_QUOTA_BYTES = 1024 * 1024 * 1024
+
 const RUNNER_INFO_PREFIX = '_DOTENVRTDB_RUNNER_'
-const RUNNER_INFO_SUMMARY_KEYS = [
-  `${RUNNER_INFO_PREFIX}HOST_TYPE`,
-  `${RUNNER_INFO_PREFIX}REPO`,
-  `${RUNNER_INFO_PREFIX}ORG`,
-  `${RUNNER_INFO_PREFIX}RUN_ID`,
-  `${RUNNER_INFO_PREFIX}RUN_ATTEMPT`,
-]
+const DOCKER_ACCESS_URL_PREFIX = '_DOCKER_ACCESS_URL_'
 
-function collectRunnerInfoFromEnv() {
-  const entries = Object.entries(process.env || {})
-    .filter(([key, value]) => key.startsWith(RUNNER_INFO_PREFIX) && String(value ?? '').trim())
-    .sort(([left], [right]) => left.localeCompare(right))
-
-  return Object.fromEntries(entries.map(([key, value]) => [key, String(value).trim()]))
+function collectEnvPrefix(prefix) {
+  const result = {}
+  Object.entries(process.env).forEach(([key, value]) => {
+    if (!key.startsWith(prefix)) return
+    const normalized = normalizeString(value)
+    if (!normalized) return
+    result[key] = normalized
+  })
+  return result
 }
 
-function collectRunnerInfoSummary(runnerInfo) {
-  return RUNNER_INFO_SUMMARY_KEYS.reduce((acc, key) => {
-    if (runnerInfo[key]) acc[key] = runnerInfo[key]
-    return acc
-  }, {})
+function normalizeAccessSlug(value) {
+  return normalizeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function titleCaseFromKey(value) {
+  const raw = normalizeString(value)
+  if (!raw) return 'Unknown'
+  return raw
+    .split(/[_\-.]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+}
+
+function pushAccessEntry(list, entry) {
+  if (!entry?.url) return
+  const url = normalizeString(entry.url)
+  if (!url) return
+  const key = `${normalizeAccessSlug(entry.app || entry.label || 'app')}::${normalizeAccessSlug(entry.via || 'direct')}::${url}`
+  if (list.some((item) => item.__dedupeKey === key)) return
+  list.push({ ...entry, url, __dedupeKey: key })
+}
+
+function deriveDockerAccessEntriesFromEnv() {
+  const entries = []
+  const projectName = normalizeString(process.env.PROJECT_NAME) || 'myapp'
+  const domain = normalizeString(process.env.DOMAIN)
+  const tailnetDomain = normalizeString(process.env.TAILSCALE_TAILNET_DOMAIN)
+  const enableDozzle = normalizeBoolean(process.env.ENABLE_DOZZLE, true)
+  const enableFilebrowser = normalizeBoolean(process.env.ENABLE_FILEBROWSER, true)
+  const enableWebssh = normalizeBoolean(process.env.ENABLE_WEBSSH, true)
+  const appHost = projectName && domain ? `${projectName}.${domain}` : ''
+  const tailnetHost = projectName && tailnetDomain ? `${projectName}.${tailnetDomain}` : ''
+  const dozzlePort = normalizeString(process.env.DOZZLE_HOST_PORT) || '18080'
+  const filebrowserPort = normalizeString(process.env.FILEBROWSER_HOST_PORT) || '18081'
+  const websshPort = normalizeString(process.env.WEBSSH_HOST_PORT) || '17681'
+
+  if (appHost) {
+    pushAccessEntry(entries, { app: 'S3Proxy', label: 'Main app', via: 'domain', url: `https://${appHost}`, source: 'inferred', hint: 'Main app qua domain chính.' })
+    pushAccessEntry(entries, { app: 'S3Proxy', label: 'Admin UI', via: 'domain', url: `https://${appHost}/admin`, source: 'inferred', hint: 'Admin UI của S3Proxy.' })
+  }
+
+  if (tailnetHost) {
+    pushAccessEntry(entries, { app: 'S3Proxy', label: 'Main app', via: 'tailscale-domain', url: `https://${tailnetHost}`, source: 'inferred', hint: 'Main app qua Tailscale Serve / internal TLS.' })
+    pushAccessEntry(entries, { app: 'S3Proxy', label: 'Admin UI', via: 'tailscale-domain', url: `https://${tailnetHost}/admin`, source: 'inferred', hint: 'Admin UI qua Tailscale domain.' })
+  }
+
+  if (domain && enableDozzle) {
+    pushAccessEntry(entries, { app: 'Dozzle', label: 'Logs', via: 'domain', url: `https://logs.${projectName}.${domain}`, source: 'inferred', hint: 'Log viewer qua Caddy/domain.' })
+    pushAccessEntry(entries, { app: 'Dozzle', label: 'Logs alias', via: 'domain-alias', url: `https://logs.${domain}`, source: 'inferred', hint: 'Alias logs theo compose.ops.yml.' })
+  }
+  if (tailnetHost && enableDozzle) {
+    pushAccessEntry(entries, { app: 'Dozzle', label: 'Logs', via: 'tailscale-port', url: `http://${tailnetHost}:${dozzlePort}`, source: 'inferred', hint: 'Tailnet access qua host port Dozzle.' })
+  }
+
+  if (domain && enableFilebrowser) {
+    pushAccessEntry(entries, { app: 'Filebrowser', label: 'Files', via: 'domain', url: `https://files.${projectName}.${domain}`, source: 'inferred', hint: 'Filebrowser qua Caddy/domain.' })
+    pushAccessEntry(entries, { app: 'Filebrowser', label: 'Files alias', via: 'domain-alias', url: `https://files.${domain}`, source: 'inferred', hint: 'Alias files theo compose.ops.yml.' })
+  }
+  if (tailnetHost && enableFilebrowser) {
+    pushAccessEntry(entries, { app: 'Filebrowser', label: 'Files', via: 'tailscale-port', url: `http://${tailnetHost}:${filebrowserPort}`, source: 'inferred', hint: 'Tailnet access qua host port Filebrowser.' })
+  }
+
+  if (domain && enableWebssh) {
+    pushAccessEntry(entries, { app: 'WebSSH', label: 'TTYD', via: 'domain', url: `https://ttyd.${projectName}.${domain}`, source: 'inferred', hint: 'Web terminal qua Caddy/domain.' })
+    pushAccessEntry(entries, { app: 'WebSSH', label: 'TTYD alias', via: 'domain-alias', url: `https://ttyd.${domain}`, source: 'inferred', hint: 'Alias ttyd theo compose.ops.yml.' })
+  }
+  if (tailnetHost && enableWebssh) {
+    pushAccessEntry(entries, { app: 'WebSSH', label: 'TTYD', via: 'tailscale-port', url: `http://${tailnetHost}:${websshPort}`, source: 'inferred', hint: 'Tailnet access qua host port WebSSH.' })
+  }
+
+  const customUrls = collectEnvPrefix(DOCKER_ACCESS_URL_PREFIX)
+  Object.entries(customUrls).forEach(([key, value]) => {
+    const rawName = key.slice(DOCKER_ACCESS_URL_PREFIX.length) || 'CUSTOM'
+    const humanName = titleCaseFromKey(rawName)
+    const parts = rawName.split('__').filter(Boolean)
+    const app = parts[0] ? titleCaseFromKey(parts[0]) : humanName
+    const via = parts[1] ? normalizeAccessSlug(parts[1]) || 'custom-env' : 'custom-env'
+    const label = parts.length > 2 ? titleCaseFromKey(parts.slice(2).join('_')) : humanName
+    pushAccessEntry(entries, { app, label, via, url: value, source: 'env', envKey: key, hint: 'Custom URL lấy trực tiếp từ biến môi trường.' })
+  })
+
+  return entries.map(({ __dedupeKey, ...item }) => item)
 }
 
 const adminServiceWorker = `
@@ -821,7 +900,6 @@ export default async function adminRoutes(fastify, _opts) {
     const stats = getAccountsStats()
     const accounts = getAllAccounts().map(toPublicAccount)
     const rtdb = getRtdbState()
-    const runnerInfo = collectRunnerInfoFromEnv()
 
     reply.send({
       status: rtdb.connected ? 'ok' : 'degraded',
@@ -832,8 +910,19 @@ export default async function adminRoutes(fastify, _opts) {
       jobs: listCronJobs(),
       cronKinds: getCronJobKinds(),
       accounts,
-      runnerInfo,
-      runnerInfoSummary: collectRunnerInfoSummary(runnerInfo),
+      runnerInfo: collectEnvPrefix(RUNNER_INFO_PREFIX),
+      dockerAccess: {
+        urls: deriveDockerAccessEntriesFromEnv(),
+        customEnv: collectEnvPrefix(DOCKER_ACCESS_URL_PREFIX),
+        context: {
+          projectName: normalizeString(process.env.PROJECT_NAME),
+          domain: normalizeString(process.env.DOMAIN),
+          tailscaleTailnetDomain: normalizeString(process.env.TAILSCALE_TAILNET_DOMAIN),
+          dozzleHostPort: normalizeString(process.env.DOZZLE_HOST_PORT),
+          filebrowserHostPort: normalizeString(process.env.FILEBROWSER_HOST_PORT),
+          websshHostPort: normalizeString(process.env.WEBSSH_HOST_PORT),
+        },
+      },
     })
   })
 

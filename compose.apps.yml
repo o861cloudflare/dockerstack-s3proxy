@@ -16,6 +16,8 @@ services:
     build:
       context: ./services/s3proxy
       dockerfile: Dockerfile
+    # Cho phép pass trực tiếp các biến _DOTENVRTDB_RUNNER_* và _DOCKER_ACCESS_URL_* từ root .env vào container.
+    # Compose vẫn ưu tiên giá trị khai báo explicit trong environment bên dưới.
     env_file:
       - ./.env
     environment:
@@ -39,6 +41,17 @@ services:
       LRU_MAX: "${S3PROXY_LRU_MAX:-10000}"
       LRU_TTL_MS: "${S3PROXY_LRU_TTL_MS:-300000}"
       DEPLOY_VERSION: "${S3PROXY_DEPLOY_VERSION:-}"
+      # Runner info footer trong admin UI. Có thể set trực tiếp ở .env hoặc từ CI inject vào compose.
+      _DOTENVRTDB_RUNNER_HOST_TYPE: "${_DOTENVRTDB_RUNNER_HOST_TYPE:-}"
+      _DOTENVRTDB_RUNNER_REPO: "${_DOTENVRTDB_RUNNER_REPO:-}"
+      _DOTENVRTDB_RUNNER_ORG: "${_DOTENVRTDB_RUNNER_ORG:-}"
+      _DOTENVRTDB_RUNNER_RUN_ID: "${_DOTENVRTDB_RUNNER_RUN_ID:-}"
+      _DOTENVRTDB_RUNNER_RUN_ATTEMPT: "${_DOTENVRTDB_RUNNER_RUN_ATTEMPT:-}"
+      # URL custom fallback cho tab App access. Các key khác cùng prefix vẫn có thể đi qua env_file: ./.env
+      _DOCKER_ACCESS_URL_WEBSSH__DOMAIN: "${_DOCKER_ACCESS_URL_WEBSSH__DOMAIN:-}"
+      _DOCKER_ACCESS_URL_WEBSSH__TAILSCALE: "${_DOCKER_ACCESS_URL_WEBSSH__TAILSCALE:-}"
+      _DOCKER_ACCESS_URL_DOZZLE__DOMAIN: "${_DOCKER_ACCESS_URL_DOZZLE__DOMAIN:-}"
+      _DOCKER_ACCESS_URL_FILEBROWSER__DOMAIN: "${_DOCKER_ACCESS_URL_FILEBROWSER__DOMAIN:-}"
       CRON_ENABLED: "${S3PROXY_CRON_ENABLED:-true}"
       CRON_TIMEZONE: "${S3PROXY_CRON_TIMEZONE:-UTC}"
       CRON_RUN_ON_START: "${S3PROXY_CRON_RUN_ON_START:-true}"

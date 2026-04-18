@@ -83,8 +83,9 @@ See `docs/DEPLOY.md` for the full migration guide.
 - Bạn có thể bấm **run now** ngay, không cần lưu cron job trước.
 - Có thêm API protected: `POST /api/cron-jobs/:jobId/run` để bạn đặt cron ở máy / hệ thống khác rồi gọi vào.
 - Nếu server này tắt mở liên tục và bạn đặt `CRON_ENABLED=false`, các job dựng sẵn vẫn hiện trong UI và vẫn chạy được bằng tay hoặc qua API.
-
 ## 2026-04-17
-- Admin UI có thêm footer hiển thị thông tin runner lấy từ env.
-- Click vào footer hoặc nút `Xem toàn bộ runner info` để xem toàn bộ biến `_DOTENVRTDB_RUNNER_`.
-- API overview trả thêm dữ liệu runner info để UI render trực tiếp.
+- Admin UI: thêm tab App access để mở nhanh domain / Tailscale / custom env URL cho S3Proxy, WebSSH, Dozzle, Filebrowser.
+- Admin UI: thêm footer Runner info hiển thị 5 key chính và modal xem toàn bộ _DOTENVRTDB_RUNNER_*.
+- Admin API /admin/api/overview: trả thêm runnerInfo và dockerAccess (inferred URLs + custom env URLs).
+- compose.apps.yml / .env.example: bổ sung hướng dẫn pass _DOTENVRTDB_RUNNER_* và _DOCKER_ACCESS_URL_* vào container.
+
